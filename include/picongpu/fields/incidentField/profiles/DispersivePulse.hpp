@@ -23,6 +23,7 @@
 
 #include "picongpu/fields/incidentField/Functors.hpp"
 #include "picongpu/fields/incidentField/Traits.hpp"
+#include "pmacc/memory/buffers/HostDeviceBuffer.hpp"
 
 #include <pmacc/algorithms/math/defines/pi.hpp>
 #include <pmacc/math/Complex.hpp>
@@ -32,6 +33,9 @@
 #include <limits>
 #include <string>
 #include <type_traits>
+
+#include <iostream>
+#include <fstream>
 
 
 namespace picongpu
@@ -51,6 +55,30 @@ namespace picongpu
                     template<typename T_Params>
                     struct DispersivePulseUnitless : public BaseParamUnitless<T_Params>
                     {
+                        /*
+                         * Probleme mit:
+                         * 
+                         * Währent Init-Time: massive Feldproduktion im origin (0, 0, 0)
+                         * Auswahl y/z index prüfen
+                         * Polarisationsrichtung: y scheint nicht zu passen ...
+                         * 
+                         * Problem: 512 * dz als Simulationsvolumen, Array deckt aber nur die Hälfte ab
+                         * Nur auf 1 GPU laufen lassen --> hilft nicht
+                         * 
+                         * LINEARER ZUSAMMENHANG ZWISCHEN SIMULATIONSVOLUMEN UND ARRAYGRÖßE:
+                         * 512 --> size(z) = 262
+                         * 416 --> size(z) = 166
+                         * 320 --> size(z) = 70
+                         * 256 --> size(z) = 5
+                         * 224 --> error (segmentation fault) --> probably no entries at all...
+                         * 128 --> error (segmentation fault)
+                         *                          
+                         * Fokus position prüfen
+                         *                          
+                         */
+                        
+                        
+                        
                         //! User SI parameters
                         using Params = T_Params;
 
@@ -59,6 +87,7 @@ namespace picongpu
 
                         // unit: UNIT_LENGTH
                         static constexpr float_X W0 = static_cast<float_X>(Params::W0_SI / UNIT_LENGTH);
+                        
 
                         // rayleigh length in propagation direction
                         static constexpr float_X rayleighLength
@@ -82,6 +111,9 @@ namespace picongpu
                     };
 
                     /** DispersivePulse incident E functor
+                     * 
+                     * Test function!
+                     * works just if the user sets x as propagation direction and y as polarisation direction
                      *
                      * @tparam T_Params parameters
                      */
@@ -95,8 +127,39 @@ namespace picongpu
 
                         //! Base functor type
                         using Base = incidentField::detail::BaseFunctorE<T_Params>;
+                        
+                        // complex data type
+                        using complex_X = alpaka::Complex<float_X>;
+                        
+                        // Data Box types for complex field values
+                        typename HostDeviceBuffer<complex_X, DIM3>::DataBoxType EwBox;
+                        // Data Box types for transversal coordinates and frequency array
+                        typename HostDeviceBuffer<float_X, DIM1>::DataBoxType YBox;
+                        typename HostDeviceBuffer<float_X, DIM1>::DataBoxType ZBox;
+                        typename HostDeviceBuffer<float_X, DIM1>::DataBoxType WBox;
+                        
+                        // calculate the sizes of the data boxes
+                        // Cell sizes in UNIT_LENGTH
+                        float_X const dx = static_cast<float_X>(picongpu::SI::CELL_WIDTH_SI / UNIT_LENGTH);
+                        float_X const dy = static_cast<float_X>(picongpu::SI::CELL_HEIGHT_SI / UNIT_LENGTH);
+                        float_X const dz = static_cast<float_X>(picongpu::SI::CELL_DEPTH_SI / UNIT_LENGTH);
+                        // global simulation volume in internal length unit
+                        const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
+                        const DataSpace<simDim> globalSize = subGrid.getGlobalDomain().size; 
+                        float3_X gridSizeTransformed
+                            = this->getInternalCoordinates(precisionCast<float_X>(globalSize));
+                        // transversal coordinate boxes size
+                        const int ySamples = static_cast<int>(gridSizeTransformed.y() / dy ); // static?
+                        const int zSamples = static_cast<int>(gridSizeTransformed.z() / dz );
+                        // Omega Box size
+                        float_X const dt = static_cast<float_X>(picongpu::SI::DELTA_T_SI / UNIT_TIME);
+                        float_X N_raw = Unitless::INIT_TIME / dt;
+                        const int wSamples = static_cast<int>(N_raw * 0.5_X);  // = n
+                        
 
                         /** Create a functor on the host side for the given time step
+                         * 
+                         * loading E(y, z, Omega)- data from Device into an array
                          *
                          * @param currentStep current time step index, note that it is fractional
                          * @param unitField conversion factor from SI to internal units,
@@ -105,6 +168,112 @@ namespace picongpu
                         HINLINE DispersivePulseFunctorIncidentE(float_X const currentStep, float3_64 const unitField)
                             : Base(currentStep, unitField)
                         {
+                            // y, z are the transversal directions and x is the propagation direction
+                            // YBox contains transversal y coordinates
+                            // internal units
+                            static auto bufferY = loadYData();
+                            YBox = bufferY->getDeviceBuffer().getDataBox();
+                            
+                            // ZBox contains transversal z coordinates
+                            // internal units
+                            static auto bufferZ = loadZData();
+                            ZBox = bufferZ->getDeviceBuffer().getDataBox();
+                            
+                            // Omega array
+                            static auto bufferW = loadWData();
+                            WBox = bufferW->getDeviceBuffer().getDataBox();
+                            
+							// E(x, y, z, w)-array
+							static auto bufferEw = loadEwData();
+                            EwBox = bufferEw->getDeviceBuffer().getDataBox();
+                        }
+                        
+                        auto loadYData()
+                        {
+                            auto bufferY = std::make_unique<HostDeviceBuffer<float_X, DIM1>>(ySamples);
+                            auto hostDBox = bufferY->getHostBuffer().getDataBox();
+                            for(int y=0; y<ySamples; ++y)
+                            {
+                                // evenly spaced sample points in internal coordinates
+                                hostDBox[y] = static_cast<float_X>(y) * dy;
+							}
+                            bufferY->hostToDevice();
+                            return bufferY;
+                        }
+                        
+                        auto loadZData()
+                        {
+                            auto bufferZ = std::make_unique<HostDeviceBuffer<float_X, DIM1>>(zSamples);
+                            auto hostDBox = bufferZ->getHostBuffer().getDataBox();
+                            std::ofstream myfile;
+                            myfile.open ("zData.txt");
+                            for(int z=0; z<zSamples; ++z)
+                            {
+                                // evenly spaced sample points in internal coordinates
+                                hostDBox[z] = static_cast<float_X>(z) * dz;
+                                
+                                myfile << static_cast<float_X>(z) * dz * UNIT_LENGTH << '\n';
+							}
+					
+					        myfile.close();
+                            
+                            bufferZ->hostToDevice();
+                            return bufferZ;
+                        }
+                        
+                        auto loadWData()
+                        {
+							// zero-padding of INSIGHT-data
+							
+							auto bufferW = std::make_unique<HostDeviceBuffer<float_X, DIM1>>(wSamples + 1);
+                            auto hostDBox = bufferW->getHostBuffer().getDataBox();
+							
+							for(int k=0; k<=wSamples; k++)
+                            {
+								// starting at Omega = 0
+								// Omega = 2pi*k/T
+                                hostDBox[k] = static_cast<float_X>(k) * pmacc::math::Pi<float_X>::doubleValue
+                                    / Unitless::INIT_TIME;
+							}
+							bufferW->hostToDevice();
+							return bufferW;
+						}
+                        
+                        auto loadEwData()
+                        {
+                            auto bufferEw = std::make_unique<HostDeviceBuffer<complex_X, DIM3>>(DataSpace<DIM3>(
+                                ySamples, zSamples, wSamples+1));
+                            auto hostDBox = bufferEw->getHostBuffer().getDataBox();
+                            
+                            std::ofstream Ewfile;
+                            Ewfile.open ("EwData.txt");
+                            Ewfile << ySamples << ' ' << zSamples << ' ' << wSamples << '\n';
+
+                            for(int y = 0; y < ySamples; y++)
+                            {
+                                for(int z = 0; z < zSamples; z++)
+                                {
+                                    for(int f = 0; f <= wSamples; f++)
+                                    {
+										// here: position of incident plane x set to 0
+                                        // Ew(Omega=0) = 0 has to be set (not calculated!)
+                                        // Omega Array is one entry longer than 3rd dimension of Ew!
+                                        // hostDBox(DataSpace<DIM3>(y,z,f)) = 
+                                        float_X Omega = static_cast<float_X>(f) * pmacc::math::Pi<float_X>::doubleValue / Unitless::INIT_TIME;
+                                        complex_X EwData = complex_X(
+                                            pmacc::math::euler(amp(16.0_X * dx, static_cast<float_X>(y)*dy, static_cast<float_X>(z)*dz, Omega), 
+										                      -phi(16.0_X * dx, static_cast<float_X>(y)*dy, static_cast<float_X>(z)*dz, Omega)));
+                                        hostDBox[y][z][f] = EwData;
+										                      
+										Ewfile << EwData.real()*EwData.real() + EwData.imag()* EwData.imag() << ' ';
+									}
+								}
+							}
+							
+							Ewfile.close();
+
+                            bufferEw->hostToDevice();
+                            return bufferEw;
                         }
 
                         /** Calculate incident field E value for the given position
@@ -118,6 +287,7 @@ namespace picongpu
                                 return this->getLinearPolarizationVector() * getValueE(totalCellIdx, 0.0_X);
                             else
                             {
+                                // macht Polarisierung hier Sinn mit den Messwerten?
                                 auto const phaseShift = pmacc::math::Pi<float_X>::halfValue;
                                 return this->getCircularPolarizationVector1() * getValueE(totalCellIdx, phaseShift)
                                     + this->getCircularPolarizationVector2() * getValueE(totalCellIdx, 0.0_X);
@@ -146,18 +316,18 @@ namespace picongpu
                          * Please ensure that E(Omega = 0) = 0 (no constant field contribution), i.e. the pulse
                          * length has to be big enough. Otherwise the implemented DFT will produce wrong results.
                          *
-                         * @param totalCellIdx cell index in the total domain (including all moving window slides)
+                         * @param x position of incident plane
+                         * @param y, z transversal direction position
                          * @param Omega frequency for which the E-value is calculated
                          */
-                        HDINLINE float_X amp(floatD_X const& totalCellIdx, float_X const Omega) const
+                        HDINLINE float_X amp(float_X const x, float_X const y, float_X const z, float_X const Omega) const
                         {
-                            // transform to 3d internal coordinate system
-                            float3_X pos = this->getInternalCoordinates(totalCellIdx);
 
                             // calculate focus position relative to the current point in the propagation direction
-                            auto const focusRelativeToOrigin = this->focus - this->origin;
+                            //auto const focusRelativeToOrigin = this->focus - this->origin;
                             // current distance to focus position
-                            float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - pos[0];
+                            //float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - x;
+                            float_X const focusPos = (this->focus)[0] - 16.0_X*dx;
                             // beam waist at the generation plane so that at focus we will get W0
                             float_X const waist = Unitless::W0
                                 * math::sqrt(1.0_X
@@ -178,12 +348,13 @@ namespace picongpu
 
                             // transversal envelope
                             mag *= math::exp(
-                                -(pos[1] - center) * (pos[1] - center) / waist / waist); // envelope y - direction
+                                -(y - center) * (y - center) / waist / waist); // envelope y - direction
                             mag *= math::exp(
-                                -(pos[2] - center) * (pos[2] - center) / waist / waist); // envelope z - direction
+                                -(z - center) * (z - center) / waist / waist); // envelope z - direction
 
                             // distinguish between dimensions
-                            if constexpr(simDim == DIM2)
+                            // check dimensionality!
+                            if constexpr(simDim == DIM2)  
                             {
                                 // pos has just two entries: pos[0] as propagation direction and pos[1] as transversal
                                 // direction
@@ -205,15 +376,11 @@ namespace picongpu
                             return mag;
                         }
 
-                        HDINLINE float_X
-                        phi(floatD_X const& totalCellIdx, float_X const Omega, float_X const phaseShift) const
+                        HDINLINE float_X phi(float_X const x, float_X const y, float_X const z, float_X const Omega) const
                         {
-                            // transform to 3d internal coordinate system
-                            float3_X pos = this->getInternalCoordinates(totalCellIdx);
-
                             // calculate focus position relative to the current point in the propagation direction
                             auto const focusRelativeToOrigin = this->focus - this->origin;
-                            float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - pos[0];
+                            float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - x;
 
                             // Initial frequency dependent complex phase
                             float_X alpha = expandedWaveVectorX(Omega);
@@ -236,11 +403,11 @@ namespace picongpu
                                 + 0.5_X * Unitless::GDD * (Omega - Unitless::w) * (Omega - Unitless::w)
                                 + Unitless::TOD / 6.0_X * (Omega - Unitless::w) * (Omega - Unitless::w)
                                     * (Omega - Unitless::w)
-                                + phaseShift + Unitless::LASER_PHASE + Omega * timeDelay;
+                                 + Unitless::LASER_PHASE + Omega * timeDelay;
 
-                            phase += ((pos[1] - center) * (pos[1] - center) + (pos[2] - center) * (pos[2] - center))
+                            phase += ((y - center) * (y - center) + (z - center) * (z - center))
                                 * Omega * 0.5_X * R_inv / SPEED_OF_LIGHT;
-                            phase -= alpha * (pos[1] + pos[2]) / Unitless::W0;
+                            phase -= alpha * (y + z) / Unitless::W0;
 
                             // distinguish between dimensions
                             if constexpr(simDim == DIM2)
@@ -257,6 +424,20 @@ namespace picongpu
                         }
 
                     private:
+                        HDINLINE int findClosestIdx(HostDeviceBuffer<float_X, DIM1>::DataBoxType const& arr, int n, float_X target) const
+                        {
+                            int left = 0, right = n - 1;
+                            while (left < right) {
+                                if (((arr[left] - target)*(arr[left] - target)) <= ((arr[right] - target)*(arr[right] - target))) {
+                                    right--;
+                                }
+                                else {
+                                    left++;
+                                }
+                            }
+                            return left;
+                        }
+                        
                         /** Get value of E field in time domain for the given position, using DFT
                          * Interpolation order of DFT given via timestep in grid.param and INIT_TIME
                          * Neglecting the constant part of DFT (k = 0) because there should be no constant field
@@ -266,36 +447,37 @@ namespace picongpu
                          *                   in radian
                          */
                         HDINLINE float_X getValueE(floatD_X const& totalCellIdx, float_X const phaseShift) const
-                        {
+                        {   
+                            float3_X pos = this->getInternalCoordinates(totalCellIdx);
+                                                     
                             auto const time = this->getCurrentTime(totalCellIdx);
                             if(time < 0.0_X)
                                 return 0.0_X;
-
+                                
                             // turning Laser off after producing one pulse (during INIT_TIME) to avoid periodic pulses
                             else if(time > Unitless::INIT_TIME)
                                 return 0.0_X;
-
-                            // timestep also in UNIT_TIME
-                            float_X const dt = static_cast<float_X>(picongpu::SI::DELTA_T_SI / UNIT_TIME);
-                            // interpolation order
-                            float_X N_raw = Unitless::INIT_TIME / dt;
-                            int n = static_cast<int>(N_raw * 0.5_X); // -0 instead of -1 for rounding up N_raw
-
+                            
+                            int y = findClosestIdx(YBox, ySamples, static_cast<float_X>(pos[1]));
+                            int z = findClosestIdx(ZBox, zSamples, static_cast<float_X>(pos[2]));
+                            
+                            
                             float_X E_t = 0.0_X; // electric field in time-domain
-                            float_X Omk = 0.0_X; // stores angular frequency for DFT-loop; Omk= 2pi*k/T
-
-                            for(int k = 1; k < n + 1; k++)
+                            for(int k = 1; k <= wSamples; k++)
                             {
-                                Omk = static_cast<float_X>(k) * pmacc::math::Pi<float_X>::doubleValue
-                                    / Unitless::INIT_TIME;
-                                E_t += 2.0_X * amp(totalCellIdx, Omk) * math::cos(phi(totalCellIdx, Omk, phaseShift))
-                                        / dt * math::cos(Omk * time)
-                                    + 2.0_X * amp(totalCellIdx, Omk) * math::sin(phi(totalCellIdx, Omk, phaseShift))
-                                        / dt * math::sin(Omk * time);
+                                // error: no instance of constructor "Norm" matches the argument list
+                                float_X abs = math::sqrt(EwBox[y][z][k].real()*EwBox[y][z][k].real() + EwBox[y][z][k].imag()*EwBox[y][z][k].imag());
+                                float_X arg = std::atan2(EwBox[y][z][k].imag(), EwBox[y][z][k].real());
+                                
+                                E_t += 2.0_X * abs * math::cos(arg + phaseShift)
+                                         * math::cos(WBox[k] * time)
+                                     + 2.0_X * abs * math::sin(arg + phaseShift)
+                                         * math::sin(WBox[k] * time);
+                       
                             }
 
-                            E_t /= static_cast<float_X>(2 * n + 1); // Normalization from DFT
-
+                            E_t /= static_cast<float_X>(2 * wSamples + 1) * dt; // Normalization from DFT
+                            
                             return E_t;
                         } // getValueE
                     }; // DispersivePulseFunctorIncidentE
@@ -322,6 +504,7 @@ namespace picongpu
                         using complex_X = alpaka::Complex<float_X>;
 
                         //! Cell size in UNIT_LENGTH
+                        // not permutated! -> probably cause of bug
                         float_X const d0 = static_cast<float_X>(picongpu::SI::CELL_WIDTH_SI / UNIT_LENGTH);
                         float_X const d1 = static_cast<float_X>(picongpu::SI::CELL_HEIGHT_SI / UNIT_LENGTH);
                         float_X const d2 = static_cast<float_X>(picongpu::SI::CELL_DEPTH_SI / UNIT_LENGTH);
