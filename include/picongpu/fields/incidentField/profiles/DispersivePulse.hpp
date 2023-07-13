@@ -348,9 +348,9 @@ namespace picongpu
 
                             // transversal envelope
                             mag *= math::exp(
-                                -(y - center) * (y - center) / waist / waist); // envelope y - direction
+                                -(y - center - (this->focus)[1]) * (y - center - (this->focus)[1]) / waist / waist); // envelope y - direction
                             mag *= math::exp(
-                                -(z - center) * (z - center) / waist / waist); // envelope z - direction
+                                -(z - center - (this->focus)[2]) * (z - center - (this->focus)[2]) / waist / waist); // envelope z - direction
 
                             // distinguish between dimensions
                             // check dimensionality!
@@ -379,8 +379,9 @@ namespace picongpu
                         HDINLINE float_X phi(float_X const x, float_X const y, float_X const z, float_X const Omega) const
                         {
                             // calculate focus position relative to the current point in the propagation direction
-                            auto const focusRelativeToOrigin = this->focus - this->origin;
-                            float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - x;
+                            // auto const focusRelativeToOrigin = this->focus - this->origin;
+                            //float_X const focusPos = math::sqrt(pmacc::math::l2norm2(focusRelativeToOrigin)) - x;
+                            float_X const focusPos = (this->focus)[0] - 16.0_X*dx;
 
                             // Initial frequency dependent complex phase
                             float_X alpha = expandedWaveVectorX(Omega);
@@ -405,9 +406,9 @@ namespace picongpu
                                     * (Omega - Unitless::w)
                                  + Unitless::LASER_PHASE + Omega * timeDelay;
 
-                            phase += ((y - center) * (y - center) + (z - center) * (z - center))
+                            phase += ((y - center - (this->focus)[1]) * (y - center - (this->focus)[1]) + (z - center - (this->focus)[2]) * (z - center - (this->focus)[2]))
                                 * Omega * 0.5_X * R_inv / SPEED_OF_LIGHT;
-                            phase -= alpha * (y + z) / Unitless::W0;
+                            phase -= alpha * (y - (this->focus)[1] + z - (this->focus)[2]) / Unitless::W0;
 
                             // distinguish between dimensions
                             if constexpr(simDim == DIM2)
