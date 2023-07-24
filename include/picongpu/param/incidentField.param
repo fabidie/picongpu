@@ -61,6 +61,14 @@
 #pragma once
 
 #include "picongpu/fields/incidentField/profiles/profiles.def"
+#include "pmacc/memory/buffers/HostDeviceBuffer.hpp"
+#include "pmacc/math/Complex.hpp"
+
+
+
+#include <iostream>
+#include <fstream>
+#include <memory>
 
 
 namespace picongpu
@@ -76,6 +84,56 @@ namespace picongpu
             public:
                 /* We use this to calculate your SI input back to our unit system */
                 PMACC_ALIGN(m_unitField, const float3_64);
+                
+                // Laser Pulse Parameters
+                static constexpr float_X WAVE_LENGTH = 0.8e-6; 
+                static constexpr float_X AMPLITUDE = 1.0e6; 
+                static constexpr float_X PULSE_DURATION = 10.0e-15/1.17741; 
+                static constexpr float_X LASER_PHASE = 0.0_X; 
+                static constexpr float_X DIRECTION_X = 1.0;
+                static constexpr float_X DIRECTION_Y = 0.0;
+                static constexpr float_X DIRECTION_Z = 0.0;
+                static constexpr float_X FOCUS_POSITION_X = 2.0e-5;
+                static constexpr float_X FOCUS_POSITION_Y = 2.0e-5;
+                static constexpr float_X FOCUS_POSITION_Z = 2.0e-5;
+                static constexpr float_X POLARISATION_DIRECTION_X = 0.0;
+                static constexpr float_X POLARISATION_DIRECTION_Y = 1.0;
+                static constexpr float_X POLARISATION_DIRECTION_Z = 0.0;
+                static constexpr float_X W0 = 5.0e-6 / 1.17741;
+                static constexpr float_X PULSE_INIT = 20.0;
+                
+                static constexpr float_X rayleighLength
+                    = pmacc::math::Pi<float_X>::value * W0 * W0 / WAVE_LENGTH;
+                    
+                static constexpr float_X OMEGA_0 = pmacc::math::Pi<float_X>::doubleValue * SPEED_OF_LIGHT / WAVE_LENGTH;
+
+                // period length of DFT
+                static constexpr float_X INIT_TIME
+                    = static_cast<float_X>(PULSE_INIT) * PULSE_DURATION;
+                    
+                // complex data type
+                using complex_X = alpaka::Complex<float_X>;
+                        
+                // Data Box types for complex field values
+                typename HostDeviceBuffer<complex_X, DIM3>::DataBoxType EwBox;
+                // Data Box types for transversal coordinates and frequency array
+                typename HostDeviceBuffer<float_X, DIM1>::DataBoxType YBox;
+                typename HostDeviceBuffer<float_X, DIM1>::DataBoxType ZBox;
+                        
+                // transversal coordinate samples
+                float_X const dx = static_cast<float_X>(picongpu::SI::CELL_WIDTH_SI);
+                float_X const dy = static_cast<float_X>(picongpu::SI::CELL_HEIGHT_SI);
+                float_X const dz = static_cast<float_X>(picongpu::SI::CELL_DEPTH_SI);
+                // transversale Simulationsboxgröße: 10*W0
+                const int ySamples = static_cast<int>(10.0 * W0 / dy );
+                const int zSamples = static_cast<int>(10.0 * W0 / dz );
+                // Omega samples
+                float_X const dt = static_cast<float_X>(picongpu::SI::DELTA_T_SI);
+                float_X N_raw = INIT_TIME / dt;
+                const int wSamples = static_cast<int>(N_raw * 0.5_X);  // = n
+                
+                float_X TIME_SI = 0.0_X;
+                
 
                 /** Create a functor
                  *
@@ -83,9 +141,97 @@ namespace picongpu
                  * @param unitField conversion factor from SI to internal units,
                  *                  field_internal = field_SI / unitField
                  */
-                HDINLINE UserFunctorIncidentE(float_X const currentStep, const float3_64 unitField)
-                    : m_unitField(unitField)
+                HINLINE UserFunctorIncidentE(float_X const currentStep, const float3_64 unitField)
+                    : m_unitField(unitField)   //, m_currentStep(currentStep)
+                {   
+                    // y, z are the transversal directions and x is the propagation direction
+                    // YBox contains transversal y coordinates
+                    static auto bufferY = loadYData();
+                    YBox = bufferY->getDeviceBuffer().getDataBox();
+                            
+                    // ZBox contains transversal z coordinates
+                    static auto bufferZ = loadZData();
+                    ZBox = bufferZ->getDeviceBuffer().getDataBox();
+                                  
+                    // E(y, z, w)-array
+                    static auto bufferEw = loadEwData();
+                    EwBox = bufferEw->getDeviceBuffer().getDataBox();
+                    
+                    TIME_SI = currentStep * static_cast<float_X>(picongpu::SI::DELTA_T_SI);
+                }
+                
+                auto loadYData()->std::shared_ptr<HostDeviceBuffer<float_X, DIM1>>
                 {
+                    auto bufferY = std::make_shared<HostDeviceBuffer<float_X, DIM1>>(ySamples);
+                    auto hostDBox = bufferY->getHostBuffer().getDataBox();
+                    for(int y=0; y<ySamples; ++y)
+                    {
+                        // evenly spaced sample points in internal coordinates
+                        hostDBox[y] = FOCUS_POSITION_Y - 5.0*W0 + static_cast<float_X>(y) * dy;
+                    }
+                    bufferY->hostToDevice();
+                    return bufferY;  //std::move()
+                } 
+                        
+                auto loadZData()->std::shared_ptr<HostDeviceBuffer<float_X, DIM1>>
+                {
+                    auto bufferZ = std::make_shared<HostDeviceBuffer<float_X, DIM1>>(zSamples);
+                    auto hostDBox = bufferZ->getHostBuffer().getDataBox();
+                    std::ofstream zfile;
+                    zfile.open ("zData.txt");
+                    for(int z=0; z<zSamples; ++z)
+                    {
+                        // evenly spaced sample points in internal coordinates
+                        hostDBox[z] = FOCUS_POSITION_Z - 5.0*W0 + static_cast<float_X>(z) * dz;
+
+                        zfile << FOCUS_POSITION_Z - 5.0*W0 + static_cast<float_X>(z) * dz << '\n';
+                    }
+					
+                    zfile.close();
+                    
+                    bufferZ->hostToDevice();
+                    return bufferZ;
+                }
+                        
+                auto loadEwData()->std::shared_ptr<HostDeviceBuffer<complex_X, DIM3>>
+                {
+                    auto bufferEw = std::make_shared<HostDeviceBuffer<complex_X, DIM3>>(DataSpace<DIM3>(
+                        ySamples, zSamples, wSamples+1));
+                    auto hostDBox = bufferEw->getHostBuffer().getDataBox();
+                    
+                    std::ofstream Ewfile;
+                    Ewfile.open ("EwData.txt");
+                    Ewfile << ySamples << ' ' << zSamples << ' ' << wSamples << '\n';
+
+                    for(int yi = 0; yi < ySamples; yi++)
+                    {
+                        float_X y = FOCUS_POSITION_Y - 5.0*W0 + static_cast<float_X>(yi) * dy;
+                        
+                        for(int zi = 0; zi < zSamples; zi++)
+                        {
+                            float_X z = FOCUS_POSITION_Z - 5.0*W0 + static_cast<float_X>(zi) * dz;
+                            
+                            for(int k = 0; k <= wSamples; k++)
+                            {
+                                // here: position of incident plane x set to 0
+                                // Ew(Omega=0) = 0 has to be set (not calculated!)
+                                // Omega Array is one entry longer than 3rd dimension of Ew!
+                                // hostDBox(DataSpace<DIM3>(y,z,f)) = 
+                                float_X Omega = static_cast<float_X>(k) * pmacc::math::Pi<float_X>::doubleValue / INIT_TIME;
+                                complex_X EwData = complex_X(
+                                    pmacc::math::euler(amp(16.0_X * dx, y, z, Omega), 
+                                                        -phi(16.0_X * dx, y, z, Omega)));
+                                hostDBox[yi][zi][k] = EwData;
+                                                        
+                                Ewfile << EwData.real()*EwData.real() + EwData.imag()* EwData.imag() << ' ';
+                            }
+                        }
+                    }
+							
+                    Ewfile.close();
+
+                    bufferEw->hostToDevice();
+                    return bufferEw;
                 }
 
                 /** Calculate incident field E_inc(r, t) for a source
@@ -96,14 +242,152 @@ namespace picongpu
                  */
                 HDINLINE float3_X operator()(const floatD_X& totalCellIdx) const
                 {
-                    auto const fieldSI = float3_X(0.0_X, 0.0_X, 0.0_X);
-                    return fieldSI / precisionCast<float_X>(m_unitField);
+                    auto const fieldSI = getValueE(totalCellIdx, 0.0_X);
+                    float3_X PolVec = float3_X(POLARISATION_DIRECTION_X, POLARISATION_DIRECTION_Y, POLARISATION_DIRECTION_Z);
+                    return PolVec * fieldSI / precisionCast<float_X>(m_unitField);
                 }
+                
+                HDINLINE float_X amp(float_X const x, float_X const y, float_X const z, float_X const Omega) const
+                {
+                    float_X const focusPos = FOCUS_POSITION_X - 16.0_X*dx;
+                    // beam waist at the generation plane so that at focus we will get W0
+                    float_X const waist = W0
+                        * math::sqrt(1.0_X
+                                        + (focusPos / rayleighLength)
+                                            * (focusPos / rayleighLength));
+
+                    // gaussian envelope in frequency domain
+                    float_X mag = math::exp(
+                        -(Omega - OMEGA_0) * (Omega - OMEGA_0) * PULSE_DURATION
+                        * PULSE_DURATION);
+
+                    // transversal envelope
+                    mag *= math::exp(
+                        -(y  - FOCUS_POSITION_Y) * (y - FOCUS_POSITION_Y) / waist / waist); // envelope y - direction
+                    mag *= math::exp(
+                        -(z - FOCUS_POSITION_Z) * (z - FOCUS_POSITION_Z) / waist / waist); // envelope z - direction
+
+                    // distinguish between dimensions
+                    if constexpr(simDim == DIM2)  
+                    {
+                        // pos has just two entries: pos[0] as propagation direction and pos[1] as transversal
+                        // direction
+                        mag *= math::sqrt(W0 / waist);
+                    }
+                    else if constexpr(simDim == DIM3)
+                    {
+                        mag *= W0 / waist;
+                    }
+
+                    // Normalization to Amplitude
+                    mag *= math::sqrt(pmacc::math::Pi<float_X>::doubleValue * 0.5_X) * 2.0_X
+                        * PULSE_DURATION * AMPLITUDE;
+
+                    // Dividing amplitude by 2 to compensate doubled spectral field strength
+                    // resulting from E(-Omega) = E*(Omega), which has to be fulfilled for E(t) to be real
+                    mag *= 0.5_X;
+
+                    return mag;
+                }
+
+                HDINLINE float_X phi(float_X const x, float_X const y, float_X const z, float_X const Omega) const
+                {
+                    float_X const focusPos = FOCUS_POSITION_X - 16.0_X*dx;
+
+                    // inverse radius of curvature of the pulse's wavefronts
+                    auto const R_inv = -focusPos
+                        / (rayleighLength * rayleighLength + focusPos * focusPos);
+                    // the Gouy phase shift
+                    auto const xi = math::atan(-focusPos / rayleighLength);
+
+                    // shifting pulse for half of INIT_TIME to start with the front of the laser pulse
+                    constexpr auto mue = 0.5_X * INIT_TIME;
+                    float_X const timeDelay = mue + focusPos / SPEED_OF_LIGHT;
+
+                    float_X phase = -Omega * focusPos / SPEED_OF_LIGHT
+                                        + LASER_PHASE + Omega * timeDelay;
+
+                    phase += ((y - FOCUS_POSITION_Y) * (y - FOCUS_POSITION_Y) + (z - FOCUS_POSITION_Z) * (z - FOCUS_POSITION_Z))
+                                * Omega * 0.5_X * R_inv / SPEED_OF_LIGHT;
+
+                    // distinguish between dimensions
+                    if constexpr(simDim == DIM2)
+                    {
+                        phase -= 0.5_X * xi;
+                    }
+                    else if constexpr(simDim == DIM3)
+                    {
+                        phase -= xi;
+                    }
+                    return phase;
+                }
+            private:
+                HDINLINE int findClosestIdx(HostDeviceBuffer<float_X, DIM1>::DataBoxType const& arr, int n, float_X target) const
+                {
+                    int left = 0, right = n - 1;
+                    while (left < right) {
+                        if (((arr[left] - target)*(arr[left] - target)) <= ((arr[right] - target)*(arr[right] - target))) {
+                            right--;
+                        }
+                        else {
+                            left++;
+                        }
+                    }
+                    return left;
+                }
+                        
+                        /** Get value of E field in time domain for the given position, using DFT
+                         * Interpolation order of DFT given via timestep in grid.param and INIT_TIME
+                         * Neglecting the constant part of DFT (k = 0) because there should be no constant field
+                         *
+                         * @param totalCellIdx cell index in the total domain (including all moving window slides)
+                         * @param phaseShift additional phase shift to add on top of everything else,
+                         *                   in radian
+                         */
+                HDINLINE float_X getValueE(floatD_X const& totalCellIdx, float_X const phaseShift) const
+                {   
+                    float_X posX = totalCellIdx[0] * dx;
+                    float_X posY = totalCellIdx[1] * dy;
+                    float_X posZ = totalCellIdx[2] * dz;
+                                                     
+                    //auto const TIME_SI = m_currentStep * picongpu::SI::DELTA_T_SI;
+                    if(TIME_SI < 0.0_X)
+                        return 0.0_X;
+                                
+                    // turning Laser off after producing one pulse (during INIT_TIME) to avoid periodic pulses
+                    else if(TIME_SI > INIT_TIME)
+                        return 0.0_X;
+                            
+                    int y = findClosestIdx(YBox, ySamples, static_cast<float_X>(posY));
+                    int z = findClosestIdx(ZBox, zSamples, static_cast<float_X>(posZ));
+                            
+                            
+                    float_X E_t = 0.0_X; // electric field in time-domain
+                    for(int k = 1; k <= wSamples; k++)
+                    {
+                        // error: no instance of constructor "Norm" matches the argument list
+                        float_X abs = math::sqrt(EwBox[y][z][k].real()*EwBox[y][z][k].real() + EwBox[y][z][k].imag()*EwBox[y][z][k].imag());
+                        float_X arg = std::atan2(EwBox[y][z][k].imag(), EwBox[y][z][k].real());
+                        float_X Omega = static_cast<float_X>(k) * pmacc::math::Pi<float_X>::doubleValue
+                                    / INIT_TIME;
+                                
+                        E_t += 2.0_X * abs * math::cos(arg + phaseShift)
+                                    * math::cos(Omega * TIME_SI)
+                                + 2.0_X * abs * math::sin(arg + phaseShift)
+                                    * math::sin(Omega * TIME_SI);
+                       
+                    }
+
+                    E_t /= static_cast<float_X>(2 * wSamples + 1) * dt; // Normalization from DFT
+                    
+                    return E_t;
+                }// getValueE
             };
+
 
             /** User-defined functor to set values of incident B field
              */
-            class UserFunctorIncidentB
+            class UserFunctorIncidentB : public UserFunctorIncidentE
             {
             public:
                 /* We use this to calculate your SI input back to our unit system */
@@ -115,8 +399,8 @@ namespace picongpu
                  * @param unitField conversion factor from SI to internal units,
                  *                  field_internal = field_SI / unitField
                  */
-                HDINLINE UserFunctorIncidentB(float_X const currentStep, const float3_64 unitField)
-                    : m_unitField(unitField)
+                HINLINE UserFunctorIncidentB(float_X const currentStep, const float3_64 unitField)
+                    : m_unitField(unitField), UserFunctorIncidentE(currentStep, unitField)
                 {
                 }
 
@@ -128,8 +412,12 @@ namespace picongpu
                  */
                 HDINLINE float3_X operator()(const floatD_X& totalCellIdx) const
                 {
-                    auto const fieldSI = float3_X(0.0_X, 0.0_X, 0.0_X);
-                    return fieldSI / precisionCast<float_X>(m_unitField);
+                    float3_X eValue = UserFunctorIncidentE::operator()(totalCellIdx);
+                    return pmacc::math::cross(float3_X(UserFunctorIncidentE::DIRECTION_X, 
+                                                       UserFunctorIncidentE::DIRECTION_Y, 
+                                                       UserFunctorIncidentE::DIRECTION_Z), 
+                                            eValue) / SPEED_OF_LIGHT 
+                        / precisionCast<float_X>(m_unitField);
                 }
             };
 
@@ -138,11 +426,46 @@ namespace picongpu
              * The functors for incident field E and B must be consistent to each other.
              * They should work for all boundaries the profile is applied to.
              */
+            
             using MyProfile = profiles::Free<UserFunctorIncidentE, UserFunctorIncidentB>;
+            
+            
+            struct MyParam
+            {
+                static constexpr float_64 WAVE_LENGTH_SI = 0.8e-6; 
+                static constexpr float_64 AMPLITUDE_SI = 1.0e6; 
+                static constexpr float_64 PULSE_DURATION_SI = 10.0e-15/1.17741; 
+                static constexpr float_X LASER_PHASE = 0.0_X; 
+                static constexpr float_64 DIRECTION_X = 1.0;
+                static constexpr float_64 DIRECTION_Y = 0.0;
+                static constexpr float_64 DIRECTION_Z = 0.0;
+                static constexpr float_64 FOCUS_POSITION_X_SI = 2e-5;
+                static constexpr float_64 FOCUS_POSITION_Y_SI = 1.3e-5;
+                static constexpr float_64 FOCUS_POSITION_Z_SI = 1.3e-5;
+                static constexpr Origin FOCUS_ORIGIN_X = Origin::Zero;
+                static constexpr Origin FOCUS_ORIGIN_Y = Origin::Zero;
+                static constexpr Origin FOCUS_ORIGIN_Z = Origin::Zero;
+                static constexpr PolarisationType Polarisation = PolarisationType::Linear; 
+                static constexpr float_64 POLARISATION_DIRECTION_X = 0.0;
+                static constexpr float_64 POLARISATION_DIRECTION_Y = 1.0;
+                static constexpr float_64 POLARISATION_DIRECTION_Z = 0.0;
+                static constexpr float_64 W0_SI = 5.0e-6 / 1.17741;
+                static constexpr float_64 PULSE_INIT = 20.0;
+                static constexpr float_64 SD_SI = 0.0;
+                static constexpr float_64 AD_SI = 0.0;
+                static constexpr float_64 GDD_SI = 0.0;
+                static constexpr float_64 TOD_SI = 0.0;
+
+                using LAGUERREMODES_t = picongpu::fields::incidentField::profiles::defaults::gaussianPulse::LAGUERREMODES_t;
+                using LAGUERREPHASES_t = picongpu::fields::incidentField::profiles::defaults::gaussianPulse::LAGUERREPHASES_t;
+                static constexpr uint32_t MODENUMBER = 0;
+            };
+            
+            
 
             /**@{*/
             //! Incident field profile types along each boundary, these 6 types (or aliases) are required.
-            using XMin = profiles::None;
+            using XMin = DispersivePulse<MyParam>;
             using XMax = profiles::None;
             using YMin = profiles::None;
             using YMax = profiles::None;
