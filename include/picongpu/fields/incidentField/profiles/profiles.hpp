@@ -1,4 +1,4 @@
-/* Copyright 2022-2023 Sergei Bastrakov
+/* Copyright 2022 Sergei Bastrakov
  *
  * This file is part of PIConGPU.
  *
@@ -9,7 +9,7 @@
  *
  * PIConGPU is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
@@ -23,6 +23,7 @@
 #include "picongpu/fields/incidentField/profiles/ExpRampWithPrepulse.hpp"
 #include "picongpu/fields/incidentField/profiles/Free.hpp"
 #include "picongpu/fields/incidentField/profiles/GaussianPulse.hpp"
+#include "picongpu/fields/incidentField/profiles/InsightPulse.hpp"
 #include "picongpu/fields/incidentField/profiles/None.hpp"
 #include "picongpu/fields/incidentField/profiles/PlaneWave.hpp"
 #include "picongpu/fields/incidentField/profiles/Polynom.hpp"
