@@ -38,7 +38,7 @@ namespace picongpu
                          * Relative paths require consistency to the current directory when PIConGPU is started
                          * with tbg and the standard .tpl files, relative to the resulting simOutput directory.
                          */
-                        static constexpr char const* filename = "/bigdata/hplsim/production/dietri04/Masterarbeit/Efield_Bfield_focus2/data_%05T.h5";
+                        static constexpr char const* filename = "/bigdata/hplsim/production/dietri04/Masterarbeit/DummyData/data_%05T.h5";
 
                         /** Name of the openPMD E and B field datasets inside the file
                          *

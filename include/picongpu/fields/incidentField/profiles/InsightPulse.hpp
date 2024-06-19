@@ -24,8 +24,7 @@
 #include "picongpu/fields/incidentField/Functors.hpp"
 #include "picongpu/fields/incidentField/Traits.hpp"
 #include "picongpu/fields/incidentField/profiles/InsightPulse.def"
-#include "pmacc/memory/buffers/DeviceBuffer.hpp"
-#include "pmacc/memory/buffers/HostBuffer.hpp"
+#include "pmacc/memory/buffers/HostDeviceBuffer.hpp"
 
 #include <pmacc/algorithms/math/defines/pi.hpp>
 #include <pmacc/math/Complex.hpp>
@@ -89,9 +88,6 @@ namespace picongpu
                          */
                         static constexpr float_X WAVE_LENGTH
                             = static_cast<float_X>(800.0e-9 / UNIT_LENGTH);
-
-                        const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
-                        pmacc::DataSpace<simDim> const globalSizePIC = subGrid.getGlobalDomain().size;  // global extent
                     };
 
                     /** InsightPulse incident E functor
@@ -101,10 +97,12 @@ namespace picongpu
                     template<typename T_Params>
                     struct InsightPulseFunctorIncidentE
                         : public InsightPulseUnitless<T_Params>
-                        // Todo: BaseFunctor einbinden, damit Funktionen wie Zeit, Ort etc. abfragen möglich ist
                     {
                         //! Unitless parameters type
                         using Unitless = InsightPulseUnitless<T_Params>;
+                        
+                        const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
+                        pmacc::DataSpace<simDim> const globalSizePIC = subGrid.getGlobalDomain().size;  // global extent
 
                         /** Create a functor on the host side for the given time step
                          *
@@ -113,7 +111,7 @@ namespace picongpu
                          *                  fieldE_internal = fieldE_SI / unitField
                          */
                         HINLINE InsightPulseFunctorIncidentE(float_X const currentStep, float3_64 const unitField)
-                            //: Base(currentStep, unitField)
+                            : timePIC(currentStep * DELTA_T)
                         {
                             // checkUnit(unitField);
                             loadFile();  // Gibt es eine bessere Stelle?
@@ -137,7 +135,9 @@ namespace picongpu
 
 
                         //! Load E and B field values from OpenPMD file to device buffer
-                        void loadFile()
+                        // notwendige Rückgabe: HostDeviceBuffer / DeviceDataBox (-Adresse)
+                        // kann man nicht außen deklarieren, da Extent dort unbekannt
+                        void loadFile()  //*HDBuffer Ex,, HDBuffer* By, HDBuffer* Bz
                         {
                             auto& dc = Environment<>::get().DataConnector();
                             /* Open a series (this does not read the dataset itself).
@@ -166,7 +166,7 @@ namespace picongpu
                             ::openPMD::Extent const datasetBExtent = datasetBy.getExtent();
 
                             // grid spacing
-                            auto const cellSizeOpenPMD = meshE.second.gridSpacing<float>();
+                            auto const cellSizeOpenPMD = meshE.gridSpacing<>();
 
                             DataSpace<simDim> EExtent, BExtent;
                             for(uint32_t d = 0u; d < simDim; d++)
@@ -176,13 +176,14 @@ namespace picongpu
                                 BExtent[d] = datasetBExtent[d];
                             }
 
+                            // besser: DataType abfragen!
                             using DataType = float_64; //datasetEx.getDatatype();
-                            // error: datasetEx is ot a typename
+                            // error: datasetEx is not a typename
 
                             // Field Buffer for Ex, By, Bz
-                            auto ExfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(EExtent);
-                            auto ByfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
-                            auto BzfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
+                            ExfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(EExtent);
+                            ByfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
+                            BzfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
 
                             auto dataEx = std::shared_ptr<DataType>{nullptr};
                             auto dataBy = std::shared_ptr<DataType>{nullptr};
@@ -201,6 +202,12 @@ namespace picongpu
 
                             if(readFromFile)  // filling host data boxes
                             {
+                                // test print
+                                for( size_t col = 0;
+                                    col < datasetEExtent[1] && col < 5;
+                                    ++col )
+                                    log<picLog::PHYSICS>("%1%, ") % dataEx.get()[col];
+
                                 auto const numEElements = std::accumulate(
                                 std::begin(datasetEExtent),
                                 std::end(datasetEExtent),
@@ -350,14 +357,16 @@ namespace picongpu
                          *
                          * @param totalCellIdx cell index in the total domain (including all moving window slides)
                          */
-                        HDINLINE float_X GridInterpolator(floatD_X const& totalCellIdx) const  //
+                        HDINLINE float_X GridInterpolator(floatD_X const& totalCellIdx) const
                         {
                             auto const posPIC = totalCellIdx * cellSize;   // point at which to evaluate field data
-                            auto const timePIC = this->currentStep * DELTA_T;
+                            // auto const timePIC = this->currentStep * DELTA_T;
+                            //  error: class "picongpu::fields::incidentField::profiles::detail::InsightPulseFunctorIncidentE<picongpu::fields::incidentField::profiles::defaults::InsightPulseParam>" 
+                            //has no member "currentStep"
                             // warning: calling a __host__ function from a __host__ __device__ function is not allowed
                             //const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
                             //auto globalSizePIC = subGrid.getGlobalDomain().size;  // global extent
-                            auto test = datasetEExtent[0]*2.0;
+                            auto test = timePIC * 2.0;
 
                             return 0.0;
                         }
@@ -373,6 +382,17 @@ namespace picongpu
                             float_X E = GridInterpolator(totalCellIdx);
                             return E;
                         } // getValueE
+                        
+                    protected:  // damit B Functor auch Zugriff hat
+                        /** Current time for calculating the field at the origin
+                         */
+                        float_X const timePIC;
+                        
+                        /** HostDeviceBuffer to store OpenPMD data in
+                         */
+                        // error: no default constructor exists for class "pmacc::HostDeviceBuffer<picongpu::float_64, 3U>"
+                        pmacc::HostDeviceBuffer<float_64, simDim> ExfieldBuffer, ByfieldBuffer, BzfieldBuffer;
+                        
                     }; // DispersivePulseFunctorIncidentE
 
                     /** InsightPulse incident B functor
