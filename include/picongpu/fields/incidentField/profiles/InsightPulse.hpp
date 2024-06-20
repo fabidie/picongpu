@@ -90,112 +90,64 @@ namespace picongpu
                             = static_cast<float_X>(800.0e-9 / UNIT_LENGTH);
                     };
 
-                    /** InsightPulse incident E functor
-                     *
-                     * @tparam T_Params parameters
-                     */
                     template<typename T_Params>
-                    struct InsightPulseFunctorIncidentE
-                        : public InsightPulseUnitless<T_Params>
+                    struct OpenPMDdata
+                       : public InsightPulseUnitless<T_Params>
                     {
-                        //! Unitless parameters type
+                         //! Unitless parameters type
                         using Unitless = InsightPulseUnitless<T_Params>;
-                        
-                        const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
-                        pmacc::DataSpace<simDim> const globalSizePIC = subGrid.getGlobalDomain().size;  // global extent
 
-                        /** Create a functor on the host side for the given time step
-                         *
-                         * @param currentStep current time step index, note that it is fractional
-                         * @param unitField conversion factor from SI to internal units,
-                         *                  fieldE_internal = fieldE_SI / unitField
-                         */
-                        HINLINE InsightPulseFunctorIncidentE(float_X const currentStep, float3_64 const unitField)
-                            : timePIC(currentStep * DELTA_T)
+                        //! HostDeviceBuffer to store OpenPMD data in
+                        std::shared_ptr<pmacc::HostDeviceBuffer<float_64, simDim>> fieldBufferEx;
+
+                        static OpenPMDdata& get()
                         {
-                            // checkUnit(unitField);
-                            loadFile();  // Gibt es eine bessere Stelle?
+                            static OpenPMDdata dataBuffer{};
+                            return dataBuffer;
                         }
-
-                        /** Read incident field E value for the given position and time step
-                         *
-                         * @param totalCellIdx cell index in the total domain (including all moving window slides)
-                         * @return incident field E value in internal units
-                         */
-                        HDINLINE float3_X operator()(floatD_X const& totalCellIdx) const
+                    private:
+                        OpenPMDdata()  // = loading the file and pushing it to device
                         {
-                            return getPolarisationVector() * getValueE(totalCellIdx);
-                        }
+                            // allocate buffer
 
-                        //! Polarisation vector
-                        HDINLINE static constexpr float3_X getPolarisationVector()
-                        {
-                            return float3_X(Unitless::POL_DIR_X, Unitless::POL_DIR_Y, Unitless::POL_DIR_Z);
-                        }
-
-
-                        //! Load E and B field values from OpenPMD file to device buffer
-                        // notwendige Rückgabe: HostDeviceBuffer / DeviceDataBox (-Adresse)
-                        // kann man nicht außen deklarieren, da Extent dort unbekannt
-                        void loadFile()  //*HDBuffer Ex,, HDBuffer* By, HDBuffer* Bz
-                        {
-                            auto& dc = Environment<>::get().DataConnector();
+                            auto& dc = Environment<>::get().DataConnector();  // wozu brauche ich den?
                             /* Open a series (this does not read the dataset itself).
                              * This is MPI collective and so has to be done by all ranks.
                              */
                             auto& gc = Environment<simDim>::get().GridController();
-                            auto const filename = getFilename();
-                            log<picLog::PHYSICS>("Loading field values from file \"%1%\"")
-                                % filename;
 
                             auto series
-                                = ::openPMD::Series{filename, ::openPMD::Access::READ_ONLY, gc.getCommunicator().getMPIComm()};
+                                = ::openPMD::Series{Unitless::filename, ::openPMD::Access::READ_ONLY, gc.getCommunicator().getMPIComm()};
                             auto meshE = series.iterations[Unitless::iteration].meshes[Unitless::datasetEName];
-                            auto meshB = series.iterations[Unitless::iteration].meshes[Unitless::datasetBName];
 
                             // dataOrder und Achsennamen abfragen + sanity check wie in IndexConverter
                             ::openPMD::MeshRecordComponent datasetEx = meshE["x"];  // Polarisation direction E
-                            ::openPMD::MeshRecordComponent datasetBy = meshB["y"];  // Polarisation direction main component B
-                            ::openPMD::MeshRecordComponent datasetBz = meshB["z"];  // Small B component & Propagation direction
-
-                            auto const indexConverterE = IndexConverter{meshE};
-                            auto const indexConverterB = IndexConverter{meshB};
 
                             // Dataset extent
                             ::openPMD::Extent const datasetEExtent = datasetEx.getExtent();
-                            ::openPMD::Extent const datasetBExtent = datasetBy.getExtent();
 
                             // grid spacing
-                            auto const cellSizeOpenPMD = meshE.gridSpacing<>();
+                            //auto const cellSizeOpenPMD = meshE.gridSpacing<>();
 
-                            DataSpace<simDim> EExtent, BExtent;
+                            DataSpace<simDim> EExtent;
                             for(uint32_t d = 0u; d < simDim; d++)
-                            {
-                                // type conversion: openPMD::Extent to DataSpace<simDim>
-                                EExtent[d] = datasetEExtent[d];
-                                BExtent[d] = datasetBExtent[d];
-                            }
+                                EExtent[d] = datasetEExtent[d];  // type conversion: openPMD::Extent to DataSpace<simDim>
 
                             // besser: DataType abfragen!
                             using DataType = float_64; //datasetEx.getDatatype();
                             // error: datasetEx is not a typename
 
-                            // Field Buffer for Ex, By, Bz
-                            ExfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(EExtent);
-                            ByfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
-                            BzfieldBuffer = pmacc::HostDeviceBuffer<DataType, simDim>(BExtent);
+                            fieldBufferEx = std::make_shared<pmacc::HostDeviceBuffer<DataType, simDim>>(EExtent);  // oben instanziiert
+                            //dc.share(fieldBufferEx);  // brauche ich das hier?
+                            // error: no suitable user-defined conversion
 
                             auto dataEx = std::shared_ptr<DataType>{nullptr};
-                            auto dataBy = std::shared_ptr<DataType>{nullptr};
-                            auto dataBz = std::shared_ptr<DataType>{nullptr};
 
                             bool readFromFile = true;  // can be used for sanity checks, otherwise dump it
                             if(readFromFile)
                             {
                                 // load the whole data chunk, no slicing necessary
                                 dataEx = datasetEx.loadChunk<DataType>();
-                                dataBy = datasetBy.loadChunk<DataType>();
-                                dataBz = datasetBz.loadChunk<DataType>();
                             }
                             // This is MPI collective and so has to be done by all ranks
                             series.flush();
@@ -214,142 +166,74 @@ namespace picongpu
                                 1u,
                                 std::multiplies<uint32_t>());
 
-                                auto hostExDataBox = ExfieldBuffer.getHostBuffer().getDataBox();
+                                auto hostExDataBox = fieldBufferEx->getHostBuffer().getDataBox();
 
                                 for(uint32_t linearIdx = 0u; linearIdx < numEElements; linearIdx++)
                                 {
                                     // .get() seems to return a flat vector, has to be reshaped to fill dataBoxes
-                                    auto const idx = indexConverterE.linearToXyz(linearIdx, datasetEExtent);
-                                    hostExDataBox(idx) = dataEx.get()[linearIdx] * datasetEx.unitSI() / UNIT_EFIELD;
-                                }
-
-                                auto const numBElements = std::accumulate(
-                                std::begin(datasetBExtent),
-                                std::end(datasetBExtent),
-                                1u,
-                                std::multiplies<uint32_t>());
-
-                                auto hostByDataBox = ByfieldBuffer.getHostBuffer().getDataBox();
-                                auto hostBzDataBox = BzfieldBuffer.getHostBuffer().getDataBox();
-
-                                for(uint32_t linearIdx = 0u; linearIdx < numBElements; linearIdx++)
-                                {
-                                    auto const idx = indexConverterB.linearToXyz(linearIdx, datasetBExtent);
-                                    hostByDataBox(idx) = dataBy.get()[linearIdx] * datasetBy.unitSI() / UNIT_BFIELD;
-                                    hostBzDataBox(idx) = dataBz.get()[linearIdx] * datasetBz.unitSI() / UNIT_BFIELD;
+                                    pmacc::DataSpace<simDim> openPMDIdx;
+                                    auto tmpIndex = linearIdx;
+                                    for(int32_t d = simDim - 1; d >= 0; d--)
+                                    {
+                                        openPMDIdx[d] = tmpIndex % datasetEExtent[d];
+                                        tmpIndex /= datasetEExtent[d];
+                                    }
+                                    hostExDataBox(openPMDIdx) = dataEx.get()[linearIdx] * datasetEx.unitSI() / UNIT_EFIELD;
                                 }
                             }
 
                             // series.close();  // Notwendig? Error: has no member close
 
                             // Copy host data to the device
-                            ExfieldBuffer.hostToDevice();
+                            fieldBufferEx->hostToDevice();
                             eventSystem::getTransactionEvent().waitForFinished();
-                            ByfieldBuffer.hostToDevice();
-                            eventSystem::getTransactionEvent().waitForFinished();
-                            BzfieldBuffer.hostToDevice();
-                            eventSystem::getTransactionEvent().waitForFinished();
-                            log<picLog::PHYSICS>("HostToDevice sucessful");
-                        }  // loadFile()
+                            log<picLog::PHYSICS>("HostToDevice successful");
+                        }
+                    };
 
-                        //! Get file name to load density from
-                        std::string getFilename() const
+                    /** InsightPulse incident E functor
+                     *
+                     * @tparam T_Params parameters
+                     */
+                    template<typename T_Params>
+                    struct InsightPulseFunctorIncidentE
+                        : public InsightPulseUnitless<T_Params>
+                    {
+                        //! Unitless parameters type
+                        using Unitless = InsightPulseUnitless<T_Params>;
+
+                        const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
+                        pmacc::DataSpace<simDim> const globalSizePIC = subGrid.getGlobalDomain().size;  // global extent
+
+                        /** Create a functor on the host side for the given time step
+                         *
+                         * @param currentStep current time step index, note that it is fractional
+                         * @param unitField conversion factor from SI to internal units,
+                         *                  fieldE_internal = fieldE_SI / unitField
+                         */
+                        HINLINE InsightPulseFunctorIncidentE(float_X const currentStep, float3_64 const unitField)
+                            : timePIC(currentStep * DELTA_T)
                         {
-                            return Unitless::filename;
+                            // checkUnit(unitField);
+                            auto dataBuffer& = OpenPMDdata<T_Params>::get();
+                            devDataBox = dataBuffer.getDeviceDataBox();  // die muss ich doch auch irgendwo vorher schon instanziiert haben, damit ich außerhalb des Konstruktors Zugriff habe, oder?
                         }
 
-                        class IndexConverter
-                        // ist so aus FromOpenPMDImpl.hpp übernommen, vllt geht ja auch der Zugriff über picongpu::densityProfiles::detail::IndexConverter
-                        // Vielleicht ist es sinnvoller, das hier zu behalten und auf meinen Fall zu spezifizieren /vereinfachen
+                        /** Read incident field E value for the given position and time step
+                         *
+                         * @param totalCellIdx cell index in the total domain (including all moving window slides)
+                         * @return incident field E value in internal units
+                         */
+                        HDINLINE float3_X operator()(floatD_X const& totalCellIdx) const
                         {
-                        public:
-                            /** Create an index converter for the given mesh
-                            *
-                            * @param mesh openPMD API mesh
-                            */
-                            IndexConverter(::openPMD::Mesh const& mesh)
-                            {
-                                if(mesh.dataOrder() != ::openPMD::Mesh::DataOrder::C)
-                                    throw std::runtime_error(
-                                        "Unsupported dataOrder in FromOpenPMD density dataset, only C is supported");
-                                auto axisLabels = std::vector<std::string>{mesh.axisLabels()};
-                                // When the attribute is not set, openPMD API currently makes it a vector of single "x"
-                                if(axisLabels.size() <= 1)
-                                    axisLabels = std::vector<std::string>{"x", "y", "z"};
-                                std::array<std::string, 3> supportedAxes = {"x", "y", "z"};
-                                for(auto d = 0; d < simDim; d++)
-                                {
-                                    auto it = std::find(begin(supportedAxes), begin(supportedAxes) + simDim, axisLabels[d]);
-                                    if(it != std::end(supportedAxes))
-                                    {
-                                        openPMDAxisIndex[d] = std::distance(begin(supportedAxes), it);
-                                        xyzAxisIndex[openPMDAxisIndex[d]] = d;
-                                    }
-                                    else
-                                        throw std::runtime_error(
-                                            "Unsupported axis label " + axisLabels[d] + " in FromOpenPMD density dataset");
-                                }
-                            }
+                            return getPolarisationVector() * getValueE(totalCellIdx);
+                        }
 
-                            /** Convert a multidimentional index from x-y-z to the openPMD coordinates
-                            *
-                            * @tparam T_Vector vector type, compatible to std::vector
-                            *
-                            * @param vector input vector
-                            */
-                            template<typename T_Vector>
-                            T_Vector xyzToOpenPMD(T_Vector const& vector) const
-                            {
-                                auto result = vector;
-                                for(auto d = 0; d < simDim; d++)
-                                    result[openPMDAxisIndex[d]] = vector[d];
-                                return result;
-                            }
-
-                            /** Convert a multidimentional index from openPMD to the x-y-z coordinates
-                            *
-                            * @tparam T_Vector vector type, compatible to std::vector
-                            *
-                            * @param vector input vector
-                            */
-                            template<typename T_Vector>
-                            T_Vector openPMDToXyz(T_Vector const& vector) const
-                            {
-                                auto result = vector;
-                                for(int32_t d = 0; d < simDim; d++)
-                                    result[xyzAxisIndex[d]] = vector[d];
-                                return result;
-                            }
-
-                            /** Convert a linear index in openPMD chunk to a multidimentional x-y-z index.
-                            *
-                            * @param openPMDLinearIndex linear index inside openPMD chunk
-                            * @param xyzChunkExtent multidimentional chunk extent in xyz
-                            */
-                            pmacc::DataSpace<simDim> linearToXyz(uint32_t openPMDLinearIndex, ::openPMD::Extent xyzChunkExtent)
-                                const
-                            {
-                                // Convert xyz extent to openPMD one
-                                //auto const openPMDChunkExtent = xyzToOpenPMD(xyzChunkExtent);
-                                // This is index in the openPMD coordinate system, the calculation relies on the C data order
-                                pmacc::DataSpace<simDim> openPMDIdx;
-                                auto tmpIndex = openPMDLinearIndex;
-                                for(int32_t d = simDim - 1; d >= 0; d--)
-                                {
-                                    openPMDIdx[d] = tmpIndex % xyzChunkExtent[d];
-                                    tmpIndex /= xyzChunkExtent[d];
-                                }
-                                // Now we convert it to the xyz coordinates
-                                return openPMDIdx; //openPMDToXyz(openPMDIdx);
-                            }
-
-                        private:
-                            // openPMDAxisIndex[0] is openPMD axis index for x, [1] - for y, [2] - for z
-                            pmacc::DataSpace<simDim> openPMDAxisIndex;
-
-                            // xyzAxisIndex[0] is x axis index in openPMD, [1] - y, [2] - z
-                            pmacc::DataSpace<simDim> xyzAxisIndex;
-                        };  // IndexConverter
+                        //! Polarisation vector
+                        HDINLINE static constexpr float3_X getPolarisationVector()
+                        {
+                            return float3_X(Unitless::POL_DIR_X, Unitless::POL_DIR_Y, Unitless::POL_DIR_Z);
+                        }
 
                         /** Linear interpolation of scalar field data stored on a regular grid to PIConGPU-intern grid
                          * Extrapolation to default values
@@ -361,7 +245,7 @@ namespace picongpu
                         {
                             auto const posPIC = totalCellIdx * cellSize;   // point at which to evaluate field data
                             // auto const timePIC = this->currentStep * DELTA_T;
-                            //  error: class "picongpu::fields::incidentField::profiles::detail::InsightPulseFunctorIncidentE<picongpu::fields::incidentField::profiles::defaults::InsightPulseParam>" 
+                            //  error: class "picongpu::fields::incidentField::profiles::detail::InsightPulseFunctorIncidentE<picongpu::fields::incidentField::profiles::defaults::InsightPulseParam>"
                             //has no member "currentStep"
                             // warning: calling a __host__ function from a __host__ __device__ function is not allowed
                             //const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
@@ -382,17 +266,13 @@ namespace picongpu
                             float_X E = GridInterpolator(totalCellIdx);
                             return E;
                         } // getValueE
-                        
+
                     protected:  // damit B Functor auch Zugriff hat
                         /** Current time for calculating the field at the origin
                          */
                         float_X const timePIC;
-                        
-                        /** HostDeviceBuffer to store OpenPMD data in
-                         */
-                        // error: no default constructor exists for class "pmacc::HostDeviceBuffer<picongpu::float_64, 3U>"
-                        pmacc::HostDeviceBuffer<float_64, simDim> ExfieldBuffer, ByfieldBuffer, BzfieldBuffer;
-                        
+                        pmacc::Buffer<float_64, simDim>::DataBoxType devDataBox;
+
                     }; // DispersivePulseFunctorIncidentE
 
                     /** InsightPulse incident B functor
