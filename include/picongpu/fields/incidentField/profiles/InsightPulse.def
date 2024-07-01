@@ -33,54 +33,51 @@ namespace picongpu
                     struct InsightPulseParam : public BaseParam
                     {
                         /** Path to the openPMD input file
-                         * 
+                         *
                          * It is recommended to use a full path to make it independent of how PIConGPU is launched.
                          * Relative paths require consistency to the current directory when PIConGPU is started
                          * with tbg and the standard .tpl files, relative to the resulting simOutput directory.
                          */
                         static constexpr char const* filename = "/bigdata/hplsim/production/dietri04/Masterarbeit/DummyData/data_%05T.h5";
 
-                        /** Name of the openPMD E and B field datasets inside the file
+                        //! Iteration inside the file (only file, not related to the current simulation time iteration)
+                        static constexpr uint32_t iteration = 0;
+
+                        /** Name of the openPMD E field dataset inside the file
                          *
-                         * By default, this dataset indexing is assumed to be in (x, y, z) coordinates.
-                         * This can be changed by setting openPMD attribute "axisLabels" of the correponding dataset.
-                         * For example, PIConGPU output uses z-y-x via this attribute, and that automatically works.
                          * Note that only C dataOrder is supported.
                          *
                          * @warning it is only the dataset itself, a simple text name and not something like
                          * "/[directories]/[iteration]/meshes/E".
                          */
                         static constexpr char const* datasetEName = "E";
-                        static constexpr char const* datasetBName = "B";
 
-                        //! Iteration inside the file (only file, not related to the current simulation time iteration)
-                        static constexpr uint32_t iteration = 0;
+                        //! Defining the propagation and polarization axes in openPMD
+                        static constexpr char const* polarisationAxisOpenPMD = "x";
+                        static constexpr char const* propagationAxisOpenPMD  = "z";  // = time axis
 
                         /** Default field values to be used for cells with no corresponding file value
-                         * units: E in V/m
-                         *        B in T
+                         * unit: V/m
                          */
                         static constexpr float_X defaultEFieldValueSI = 0.0_X;
-                        static constexpr float_X defaultBFieldValueSI = 0.0_X;
 
-                        /** Unit propagation direction vector
+                        /** Unit propagation direction vector in PIConGPU
                          *
                          * Norm of this vector must be 1.0.
                          * (Normalization is required on a user side as internally it is awkward to do with the
                          * static-constexpr style of using parameters.)
-                         * 
-                         * Must be either X or Y or Z
-                         * 
-                         * The Laser polarisation direction follows directly from this choice, e.g. if one 
-                         * chooses X as propagation direction, E will be linear polarized in Y direction and 
-                         * B in Z direction (or any cyclic swap of this configuration).
+                         *
+                         * Must be either X or Y or Z, but can be different from propagationAxisOpenPMD
+                         *
+                         * The Laser polarisation direction follows directly from this choice, according to
+                         * the OpenPMD data.
                          *
                          * unit: none
                          */
-                        static constexpr float_64 DIRECTION_X = 1.0;
-                        static constexpr float_64 DIRECTION_Y = 0.0;
+                        static constexpr float_64 DIRECTION_X = 0.0;
+                        static constexpr float_64 DIRECTION_Y = 1.0;
                         static constexpr float_64 DIRECTION_Z = 0.0;
-                        
+
                     };
                 } // namespace defaults
 
