@@ -151,13 +151,11 @@ namespace picongpu
                             auto const axisLabels = std::vector<std::string>{meshE.axisLabels()};  // ("x", "y", "z")
                             // evtl default axis labels if attribute is not set?
                             // DataBox alignment
-                            float3_X const xyzAxisIndex{0, 1, 2};  // 2, 1, 0 wäre PIConGPu order, wäre das sinnvoller?
+                            float3_X const xyzAxisIndex{0.0_X, 1.0_X, 2.0_X};  // 2, 1, 0 wäre PIConGPu order, wäre das sinnvoller? --> dann müsste man alles andere auch umsortieren
                             
                             // filling first with unknown axis index, then override the two known directions
                             float3_X aligningAxisIndex = float3_X::create(pmacc::math::abs(pmacc::math::dot(xyzAxisIndex,
                                         pmacc::math::cross(InsightPulseFunctorIncidentE<T_Params>::getDirection(), InsightPulseFunctorIncidentE<T_Params>::getPolarisationVector()))));
-                                        // does the access to Efunctor work?  --> print test
-                                        log<picLog::PHYSICS>("getDirection %1%") % InsightPulseFunctorIncidentE<T_Params>::getDirection();
 
                             // aligning propagation direction
                             // does std::find work even if axisLabels is not sorted?
@@ -290,7 +288,7 @@ namespace picongpu
                             cellSizeOpenPMDdataBox = openPMDdata.bufferCellSizeOpenPMD->getDeviceBuffer().getDataBox();
                         }
 
-                        // Folgende Funktionen gibt es auch in BaseFinctor, evtl den nutzen!
+                        // Folgende Funktionen gibt es auch in BaseFunctor, evtl den nutzen!
                         /** Read incident field E value for the given position and time step
                          *
                          * @param totalCellIdx cell index in the total domain (including all moving window slides)
@@ -349,7 +347,7 @@ namespace picongpu
                             }
                             
                             // if posPIC lies outside of stored field data, return default value                            
-                            DataSpace<simDim> idxClosest; // = uint vector?
+                            
                             float3_X idxClosestRaw; 
 
                             for(uint32_t d = 0u; d < simDim; d++)
@@ -364,34 +362,67 @@ namespace picongpu
                                 else
                                 {
                                     idxClosestRaw[d] = (posPIC[d] - offsetOpenPMD[d]) / cellSizeOpenPMDdataBox(d);  // transversal / spatial
-                                    idxClosest[d] = static_cast<int>(idxClosestRaw[d] + 0.5_X);  // geht das auch mit static_cast auf alles am Ende / broadcasting?
+                                    // idxClosest[d] = static_cast<int>(idxClosestRaw[d] + 0.5_X);  // geht das auch mit static_cast auf alles am Ende / broadcasting?
                                 }
                             }
+                            
                             // longitudinal
                             idxClosestRaw[propAxisIdx] = extentOpenPMDdataBox(propAxisIdx)-1.0_X - timePIC / cellSizeOpenPMDdataBox(propAxisIdx) * SPEED_OF_LIGHT;
-                            idxClosest[propAxisIdx] = static_cast<int>(idxClosestRaw[propAxisIdx] + 0.5);
+                            //idxClosest[propAxisIdx] = static_cast<int>(idxClosestRaw[propAxisIdx] + 0.5_X);
+                            // does this work?
+                            DataSpace<simDim> const idxClosest = static_cast<pmacc::math::Vector<int, simDim>>(idxClosestRaw + floatD_X::create(0.5_X)); // Reihenfolge sollte stimmen, da math statt alpaka
 
                             for(uint32_t d = 0u; d < simDim; d++)
                             {
-                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] >= 0, "Error: idxClosest[%u] < 0 ", d);
-                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] <= extentOpenPMDdataBox(d) - 1, "Error: idxClosest%u] > extentOpenPMDdataBox(d) - 1", d);
+                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] >= 0, "Error: idxClosest[%u] < 0 ", d); // kann man weglassen, da uint
+                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] <= extentOpenPMDdataBox(d) - 1, "Error: idxClosest[%u] > extentOpenPMDdataBox(d) - 1", d);
                             }
                             
-                            float_X interpE; 
+                            float_X interpE = 0; 
                             // find the other 7 nearest neighbours
                             // shift to next to nearest neighbour index
-                            floatD_X idxShift, weight;  // eigentlich int, aber ich brauche die invertierung
+                            pmacc::math::Vector<int, simDim> idxShift;
+                            floatD_X weight;
                             for(uint32_t d = 0u; d < simDim; d++)
                             {
-                                if(idxClosestRaw[d] - static_cast<float_X>(idxClosest[d]) < 0)
+                                if(idxClosestRaw[d] - static_cast<float_X>(idxClosest[d]) <= 0)
                                     idxShift[d] = -1;
                                 else
                                     idxShift[d] = 1;
                                     
-                                weight[d] = pmacc::math::abs(static_cast<float_X>(idxClosest[d]) - idxClosestRaw[d]);
+                                weight[d] = pmacc::math::abs(static_cast<float_X>(idxClosest[d]) - idxClosestRaw[d]);  // Wichtungsfaktoren / Koeffizienten
                             }
-                            
-                            interpE = static_cast<float_X>(devDataBox(idxClosest)) * weight.productOfComponents();
+                            // check dass indices in erlaubter Range!
+                            // --> Randbereiche prüfen!
+                            // geht das folgende auch eleganter? vllt Shleife drüber legen oder array operationen??
+                            interpE += static_cast<float_X>(devDataBox(idxClosest)) * (floatD_X::create(1.0_X) - weight).productOfComponents();  // 0 : E(x0, y0, z0)
+                            // auto sinnvoll --> wird das int oder uint? uint wäre besser, aber dafür sollte sichergestellt sein dass ergebnis nicht <0
+                            DataSpace<simDim> idx1 = idxClosest; // wird das hier kopiert oder manipuliere ich auch gleich idxClosest? --> const machen!
+                            idx1[0] = idxClosest[0] + idxShift[0];
+                                PMACC_DEVICE_VERIFY_MSG(idx1[0] <= extentOpenPMDdataBox(0) - 1 and idx1[0] >= 0, "Error: idx1[0] = %i", idx1[0]);
+                            interpE += static_cast<float_X>(devDataBox(idx1)) * weight[0] * (1.0_X - weight[1]) * (1.0_X - weight[2]);           // 1 : E(x1, y0, z0)
+                            DataSpace<simDim> idx2 = idxClosest;
+                            idx2[1] = idxClosest[1] + idxShift[1];
+                                PMACC_DEVICE_VERIFY_MSG(idx2[1] <= extentOpenPMDdataBox(1) - 1 and idx2[1] >= 0, "Error: idx2[1] = %i", idx2[1]);
+                            interpE += static_cast<float_X>(devDataBox(idx2)) * (1.0_X - weight[0]) * weight[1] * (1.0_X - weight[2]);           // 2 : E(x0, y1, z0)
+                            DataSpace<simDim> idx3 = idxClosest; 
+                            idx3[2] = idxClosest[2] + idxShift[2];
+                                PMACC_DEVICE_VERIFY_MSG(idx3[2] <= extentOpenPMDdataBox(2) - 1 and idx3[2] >= 0, "Error: idx3[2] = %i", idx3[2]);
+                            interpE += static_cast<float_X>(devDataBox(idx3)) * (1.0_X - weight[0]) * (1.0_X - weight[1]) * weight[2];           // 3 : E(x0, y0, z1)
+                            DataSpace<simDim> idx4 = idxClosest;
+                            idx4[0] = idxClosest[0] + idxShift[0];
+                            idx4[1] = idxClosest[1] + idxShift[1];
+                            interpE += static_cast<float_X>(devDataBox(idx4)) * weight[0] * weight[1] * (1.0_X - weight[2]);                     // 4 : E(x1, y1, z0)
+                            DataSpace<simDim> idx5 = idxClosest;
+                            idx5[1] = idxClosest[1] + idxShift[1];
+                            idx5[2] = idxClosest[2] + idxShift[2];
+                            interpE += static_cast<float_X>(devDataBox(idx5)) * (1.0_X - weight[0]) * weight[1] * weight[2];                     // 5 : E(x0, y1, z1)
+                            DataSpace<simDim> idx6 = idxClosest;
+                            idx6[0] = idxClosest[0] + idxShift[0];
+                            idx6[2] = idxClosest[2] + idxShift[2];
+                            interpE += static_cast<float_X>(devDataBox(idx6)) * weight[0] * (1.0_X - weight[1]) * weight[2];                     // 6 : E(x1, y0, z1)
+                            DataSpace<simDim> idx7 = idxClosest + idxShift;
+                            interpE += static_cast<float_X>(devDataBox(idx7)) * weight.productOfComponents();                                    // 7 : E(x1, y1, z1)
 
                             return interpE; //static_cast<float_X>(devDataBox(idxClosest));
                         }
