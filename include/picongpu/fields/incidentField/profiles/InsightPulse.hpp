@@ -115,10 +115,7 @@ namespace picongpu
                         //! Necessary attributes
                         DataSpace<simDim> extentOpenPMD;  // dataSpacwe
                         float3_X cellSizeOpenPMD;
-                        // warning #20094-D: a host member cannot be directly read in a device function
-                        // std::shared_ptr<DataSpace<simDim>> extentOpenPMD;
-                        // std::shared_ptr<float3_X> cellSizeOpenPMD;
-                        // wie krieg ich die hier raus???
+
                         //! Storing Attributes in HostBuffer to permit access
                         // 1dimensional -> 1 statt simDim
                         // reicht HostBuffer?
@@ -206,8 +203,7 @@ namespace picongpu
                             using dataType = float_64; // meshRecordE.getDatatype(); error: is not a type name
 
                             fieldBufferE = std::make_shared<pmacc::HostDeviceBuffer<dataType, simDim>>(extentOpenPMD);  // oben instanziiert
-                            //dc.share(fieldBufferE);  // brauche ich das hier?
-                            // error: no suitable user-defined conversion
+
 
                             auto dataEx = std::shared_ptr<dataType>{nullptr};
                             dataEx = meshRecordE.loadChunk<dataType>();
@@ -263,7 +259,7 @@ namespace picongpu
 
                         const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
                         // can be static?
-                        pmacc::DataSpace<simDim> extentPIC = subGrid.getGlobalDomain().size;  // global extent, No of cells
+                        pmacc::DataSpace<simDim> extentPIC = subGrid.getGlobalDomain().size;  // global extent, Nr. of cells
                         
 
                         /** Create a functor on the host side for the given time step
@@ -276,6 +272,7 @@ namespace picongpu
                             : timePIC(currentStep * DELTA_T)
                         {
                             log<picLog::PHYSICS>("currentStep %1%") % currentStep;
+                            
                             auto& openPMDdata = OpenPMDdata<T_Params>::get();
                             log<picLog::PHYSICS>("Got OpenPMDdata");
 
@@ -286,6 +283,7 @@ namespace picongpu
                             // OpenPMD attributes
                             extentOpenPMDdataBox = openPMDdata.bufferExtentOpenPMD->getDeviceBuffer().getDataBox();
                             cellSizeOpenPMDdataBox = openPMDdata.bufferCellSizeOpenPMD->getDeviceBuffer().getDataBox();
+                            
                         }
 
                         // Folgende Funktionen gibt es auch in BaseFunctor, evtl den nutzen!
@@ -328,6 +326,7 @@ namespace picongpu
                             auto const posPIC = totalCellIdx * cellSize;   // point at which to evaluate field data
                             // evtl schon im Konstruktor initialisieren (als static?)
                             // 3er vektor als int?
+                            // stimmt das oder ist es 1, 0, 2?
                             int const propAxisIdx = static_cast<int>(pmacc::math::dot(float3_X{0.0_X, 1.0_X, 2.0_X}, getDirection()));  // 0 = x, 1 = y, 2 = z
 
 
@@ -357,12 +356,9 @@ namespace picongpu
                                     (posPIC[d] < offsetOpenPMD[d] or posPIC[d] > offsetOpenPMD[d] + (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d))  // transversal axes
                                     or timePIC < 0 or timePIC > (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d) / SPEED_OF_LIGHT)  // OpenPMD propagation axis = time axis
                                     return Unitless::defaultEFieldValue;
-                                // is SPEED_OF_LIGHT in internal units?
-                                // maybe do time already in hosttodevice
                                 else
                                 {
                                     idxClosestRaw[d] = (posPIC[d] - offsetOpenPMD[d]) / cellSizeOpenPMDdataBox(d);  // transversal / spatial
-                                    // idxClosest[d] = static_cast<int>(idxClosestRaw[d] + 0.5_X);  // geht das auch mit static_cast auf alles am Ende / broadcasting?
                                 }
                             }
                             
@@ -435,7 +431,9 @@ namespace picongpu
                          */
                         HDINLINE float_X getValueE(floatD_X const& totalCellIdx) const
                         {
-                            float_X E = GridInterpolator(totalCellIdx);
+                            float_X const E = GridInterpolator(totalCellIdx);
+                            //pmacc::math::sin(pmacc::math::Pi<float_X>::doubleValue *SPEED_OF_LIGHT / (0.8e-6/UNIT_LENGTH) * timePIC)
+                              //  * pmacc::math::exp(-(timePIC - 2.0_X * tau) * (timePIC - 2.0_X * tau) / (tau*tau));
                             return E;
                         } // getValueE
 
@@ -443,6 +441,7 @@ namespace picongpu
                         /** Current time for calculating the field at the origin
                          */
                         float_X const timePIC;
+                        float_X const tau = 30.0e-15/UNIT_TIME;
                         //typename pmacc::Buffer<float_64, simDim>::DataBoxType devDataBox;
                         PMACC_ALIGN(devDataBox, typename pmacc::Buffer<float_64, simDim>::DataBoxType);
                         typename pmacc::Buffer<float_X, 1>::DataBoxType extentOpenPMDdataBox;

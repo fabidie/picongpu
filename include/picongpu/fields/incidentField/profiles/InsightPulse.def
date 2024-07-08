@@ -81,7 +81,7 @@ namespace picongpu
                     };
                 } // namespace defaults
 
-                /** Experimental laser profile meaured with Insight
+                /** Experimental laser profile measured with Insight
                  *
                  * @tparam T_Params class parameter to configure the Insight laser profile,
                  *                  see members of defaults::InsightPulseParam
