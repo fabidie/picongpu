@@ -30,7 +30,7 @@ namespace picongpu
             {
                 namespace defaults
                 {
-                    struct InsightPulseParam : public BaseParam
+                    struct InsightPulseParam
                     {
                         /** Path to the openPMD input file
                          *

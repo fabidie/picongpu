@@ -29,15 +29,15 @@
 #include <pmacc/algorithms/math/defines/pi.hpp>
 #include <pmacc/math/Complex.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
-#include <valarray>  // std::abs(valarray)
-#include <memory>
-#include <algorithm>
 
 #include <openPMD/openPMD.hpp>
 
@@ -61,6 +61,8 @@ namespace picongpu
                     {
                         //! User SI parameters
                         using Params = T_Params;
+                        
+                        //constexpr char const* x = Params::propagationAxisOpenPMD;
 
                         static constexpr float_X defaultEFieldValue = static_cast<float_X>(Params::defaultEFieldValueSI / UNIT_EFIELD);
 
@@ -70,7 +72,7 @@ namespace picongpu
                         static constexpr float_X DIR_Z = static_cast<float_X>(Params::DIRECTION_Z);
 
                         // Polarization direction vector -> cyclic swap
-                        // Anzahl zyklischer Vertauschungen aus OpenPMD faten auslesen
+                        // Anzahl zyklischer Vertauschungen aus OpenPMD daten auslesen
                         // NOCH NICHT KORREKT!
                         static constexpr float_X POL_DIR_X = static_cast<float_X>(Params::DIRECTION_Z);
                         static constexpr float_X POL_DIR_Y = static_cast<float_X>(Params::DIRECTION_X);
@@ -259,7 +261,7 @@ namespace picongpu
 
                         const SubGrid<simDim>& subGrid = Environment<simDim>::get().SubGrid();
                         // can be static?
-                        pmacc::DataSpace<simDim> extentPIC = subGrid.getGlobalDomain().size;  // global extent, Nr. of cells
+                        pmacc::DataSpace<simDim> const extentPIC = subGrid.getGlobalDomain().size;  // global extent, Nr. of cells
                         
 
                         /** Create a functor on the host side for the given time step
@@ -298,15 +300,43 @@ namespace picongpu
                         }
 
                         //! Get a unit vector with linear E polarization
+                        // Erklärung
                         HDINLINE static constexpr float3_X getPolarisationVector()
                         {
-                            return float3_X(Unitless::POL_DIR_X, Unitless::POL_DIR_Y, Unitless::POL_DIR_Z);
+                            // is there a better place for this assertion?
+                            PMACC_CASSERT_MSG(
+                                simDim_has_to_be_3,
+                                simDim == 3u);
+                                
+                            PMACC_CASSERT_MSG(
+                                OpenPMD_polarisation_and_propagation_axes_have_to_be_different__check_your_parameters,
+                                Unitless::propagationAxisOpenPMD != Unitless::polarisationAxisOpenPMD);
+                                
+                            float_X POL_DIR_X, POL_DIR_Y, POL_DIR_Z;  // muss das constexpr sein?
+                            
+                            if constexpr(Unitless::propagationAxisOpenPMD == "x" and Unitless::polarisationAxisOpenPMD == "z" or
+                                         Unitless::propagationAxisOpenPMD == "y" and Unitless::polarisationAxisOpenPMD == "x" or
+                                         Unitless::propagationAxisOpenPMD == "z" and Unitless::polarisationAxisOpenPMD == "y")
+                            {
+                                POL_DIR_X = static_cast<float_X>(Unitless::DIR_Y);
+                                POL_DIR_Y = static_cast<float_X>(Unitless::DIR_Z);
+                                POL_DIR_Z = static_cast<float_X>(Unitless::DIR_X);
+                            }
+                            else if(Unitless::propagationAxisOpenPMD == "x" and Unitless::polarisationAxisOpenPMD == "y" or
+                                    Unitless::propagationAxisOpenPMD == "y" and Unitless::polarisationAxisOpenPMD == "z" or
+                                    Unitless::propagationAxisOpenPMD == "z" and Unitless::polarisationAxisOpenPMD == "x")
+                            {
+                                POL_DIR_X = static_cast<float_X>(Unitless::DIR_Z);
+                                POL_DIR_Y = static_cast<float_X>(Unitless::DIR_X);
+                                POL_DIR_Z = static_cast<float_X>(Unitless::DIR_Y);
+                            }
+                            
+                            return float3_X(POL_DIR_X, POL_DIR_Y, POL_DIR_Z);
                         }
 
                         //! Get a normalized 3-dimensional direction vector
-                        // needed for ApproximateIncidentB
                         // kommt eigentlich aus Base!
-                        HDINLINE static float3_X getDirection()
+                        HDINLINE static constexpr float3_X getDirection() // constexpr?
                         {
                             return float3_X(Unitless::DIR_X, Unitless::DIR_Y, Unitless::DIR_Z);
                         }
@@ -364,13 +394,14 @@ namespace picongpu
                             
                             // longitudinal
                             idxClosestRaw[propAxisIdx] = extentOpenPMDdataBox(propAxisIdx)-1.0_X - timePIC / cellSizeOpenPMDdataBox(propAxisIdx) * SPEED_OF_LIGHT;
+                            idxClosestRaw[propAxisIdx] = extentOpenPMDdataBox(propAxisIdx)-1.0_X - timePIC / cellSizeOpenPMDdataBox(propAxisIdx) * SPEED_OF_LIGHT;
                             //idxClosest[propAxisIdx] = static_cast<int>(idxClosestRaw[propAxisIdx] + 0.5_X);
                             // does this work?
                             DataSpace<simDim> const idxClosest = static_cast<pmacc::math::Vector<int, simDim>>(idxClosestRaw + floatD_X::create(0.5_X)); // Reihenfolge sollte stimmen, da math statt alpaka
 
                             for(uint32_t d = 0u; d < simDim; d++)
                             {
-                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] >= 0, "Error: idxClosest[%u] < 0 ", d); // kann man weglassen, da uint
+                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] >= 0, "Error: idxClosest[%u] < 0 ", d);
                                 PMACC_DEVICE_VERIFY_MSG(idxClosest[d] <= extentOpenPMDdataBox(d) - 1, "Error: idxClosest[%u] > extentOpenPMDdataBox(d) - 1", d);
                             }
                             
