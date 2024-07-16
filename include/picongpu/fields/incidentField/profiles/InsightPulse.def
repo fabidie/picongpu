@@ -59,7 +59,7 @@ namespace picongpu
                         /** Default field values to be used for cells with no corresponding file value
                          * unit: V/m
                          */
-                        static constexpr float_X defaultEFieldValueSI = 0.0_X;
+                        static constexpr float_64 defaultEFieldValueSI = 0.0;
 
                         /** Unit propagation direction vector in PIConGPU
                          *
@@ -69,14 +69,39 @@ namespace picongpu
                          *
                          * Must be either X or Y or Z, but can be different from propagationAxisOpenPMD
                          *
-                         * The Laser polarisation direction follows directly from this choice, according to
-                         * the OpenPMD data.
                          *
                          * unit: none
                          */
                         static constexpr float_64 DIRECTION_X = 0.0;
                         static constexpr float_64 DIRECTION_Y = 1.0;
                         static constexpr float_64 DIRECTION_Z = 0.0;
+                        
+                        /** Unit E polarization direction
+                        *
+                        * Must be orthogonal to the propagation direction.
+                        *
+                        * Norm of this vector must be 1.0.
+                        * (Normalization is required on a user side as internally it is awkward to do with the
+                        * static-constexpr style of using parameters.)
+                        *
+                        * Note: we use spelling 'Polarisation' for consistency with other lasers.
+                        *
+                        * Must be either X or Y or Z, but can be different from polarisationAxisOpenPMD.
+                        *
+                        * unit: none
+                        */
+                        static constexpr float_64 POLARISATION_DIRECTION_X = 1.0;
+                        static constexpr float_64 POLARISATION_DIRECTION_Y = 0.0;
+                        static constexpr float_64 POLARISATION_DIRECTION_Z = 0.0;
+                        
+                        /** Time delay, after which the laser initialisation will be started.
+                        * The delay must be positive.
+                        *
+                        * unit: time
+                        */
+                        // can be made optional, as in BaseParam.hpp
+                        static constexpr float_64 TIME_DELAY_SI = 0.0;
+
 
                     };
                 } // namespace defaults
