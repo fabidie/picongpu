@@ -207,15 +207,14 @@ namespace picongpu
                                 throw std::runtime_error(
                                     "Unsupported dataOrder in FromOpenPMD density dataset, only C is supported");
                             // get axis labels
-                            auto const axisLabels = std::vector<std::string>{mesh.axisLabels()};  // ("x", "y", "z")
+                            auto const axisLabels = std::vector<std::string>{mesh.axisLabels()}; 
 
                             // aligning recorded field data according to user input propagation / polarization direction
                             floatD_X const xyzAxisIndex{0.0_X, 1.0_X, 2.0_X};
 
                             // starting with aligning the second transversal direction, perp. to polarisation and propagation
                             DataSpace<simDim> aligningAxisIndex = DataSpace<simDim>::create(static_cast<int>(pmacc::math::abs(pmacc::math::dot(xyzAxisIndex,
-                                        pmacc::math::cross(Functor::getDirection(),
-                                                           Functor::getPolarisationVector())))));
+                                        pmacc::math::cross(Functor::getDirection(), Functor::getPolarisationVector())))));
 
                             // aligning propagation direction
                             int const propAxisIdx = static_cast<int>(pmacc::math::abs(pmacc::math::dot(xyzAxisIndex, Functor::getDirection())));
@@ -235,12 +234,12 @@ namespace picongpu
                                 throw std::runtime_error(
                                     "Could not find polarisation axis " + std::string(Params::polarisationAxisOpenPMD) + " in OpenPMD dataset");
 
-                            // meshRecord.getDatatype(); error: is not a type name
+                            // wanted to use "typename meshRecord.getDatatype()" but causes "error: a class or namespace qualified name is required"
                             using dataType = float_64;
 
                             ::openPMD::MeshRecordComponent meshRecord = mesh[Params::polarisationAxisOpenPMD];
 
-                            // necessary attributes
+                            //! necessary attributes
                             // Raw = not yet aligned
                             ::openPMD::Extent const extentRaw = meshRecord.getExtent();
                             auto const cellSizeRaw = mesh.gridSpacing<dataType>();
@@ -263,8 +262,9 @@ namespace picongpu
                                 extentOpenPMD[aligningAxisIndex[d]] = static_cast<int>(extentRaw[d]);
                                 dataBoxExtent(aligningAxisIndex[d]) = static_cast<float_X>(extentRaw[d]);
                                 dataBoxCellSize(aligningAxisIndex[d]) = static_cast<float_X>(cellSizeRaw[d] * mesh.gridUnitSI()) / UNIT_LENGTH;
-                                dataBoxOffset(aligningAxisIndex[d]) = (static_cast<float_X>(extentPIC[aligningAxisIndex[d]] - 1) * cellSize[aligningAxisIndex[d]]
-                                    - (dataBoxExtent(aligningAxisIndex[d]) - 1.0_X) * dataBoxCellSize(aligningAxisIndex[d])) / 2.0_X;
+                                dataBoxOffset(aligningAxisIndex[d]) = 0.5_X
+                                                * (static_cast<float_X>(extentPIC[aligningAxisIndex[d]] - 1) * cellSize[aligningAxisIndex[d]]
+                                                - (dataBoxExtent(aligningAxisIndex[d]) - 1.0_X) * dataBoxCellSize(aligningAxisIndex[d]));
                             }
 
                             // push attribute data to device
@@ -302,8 +302,10 @@ namespace picongpu
                                 hostFieldDataBox(openPMDIdx) = static_cast<float_X>(fieldData.get()[linearIdx] * meshRecord.unitSI()) / UNIT_EFIELD;
                             }
 
-                            // check whether transversal simulation window is smaller than transversal DataBox extent and log the maximum value of discarded data
-                            // a future improvement of this code could include storing just the necessary parts of the recordrd field data
+                            /* If the transversal simulation window is smaller than the transversal DataBox extent, data at the chunk borders
+                             * will be discarded. The maximum discarded value (relative to the maximum amplitude) will be logged.
+                             * A possible improvement of this code could include storing just the necessary parts of the recorded field data.
+                             */
                             dataType maxE(0.0);
                             dataType maxEDiscarded(0.0);
                             bool discard = false;
@@ -317,14 +319,14 @@ namespace picongpu
                                         {
                                             for(uint32_t k = 0; k < extentOpenPMD[2]; k++)
                                             {
-                                                // looking for maximum recorded field value
+                                                // look for maximum amplitude value
                                                 if(discard == false) // do this just the first time entering the loop
                                                 {
                                                     dataType valE = pmacc::math::abs(hostFieldDataBox(DataSpace<simDim>(i, j, k)));
                                                     if(valE > maxE)
                                                         maxE = valE;
                                                 }
-                                                // looking for maximum discarded recorded field value
+                                                // look for maximum discarded amplitude value
                                                 if(d == 0 and i <= static_cast<int>(pmacc::math::abs(dataBoxOffset(d)) / dataBoxCellSize(d)))
                                                 {
                                                     dataType valLeft = pmacc::math::abs(hostFieldDataBox(DataSpace<simDim>(i, j, k)));
@@ -360,13 +362,15 @@ namespace picongpu
                             }  // d
 
                             if(discard == true)
-                                log<picLog::PHYSICS>("Warning: Transversal simulation window extent is smaller than measured data, discarding data at the border.\n" 
-                                    + "Max. discarded amplitude relative to max. measured amplitude: %1% ")
+                                log<picLog::PHYSICS>("Warning: Transversal simulation window extent is smaller than measured data, discarding data at the border.\nMax. discarded amplitude relative to max. measured amplitude: %1% ")
                                     % (maxEDiscarded / maxE);
 
-                            // push field data to device
+                            /* Push field data to device
+                             * Every used device will now store the whole field data chunk. Since this consumes a lot of memory, a possible improvement of this code
+                             * could be just to push those two time slices to the device, which are necessary for the current time step.
+                             */
                             bufferFieldData->hostToDevice();
-                            eventSystem::getTransactionEvent().waitForFinished();
+                            eventSystem::getTransactionEvent().waitForFinished();                            
                         }
                     };
 
@@ -393,10 +397,10 @@ namespace picongpu
                             // load data at timestep 0
                             auto& openPMDdata = OpenPMDdata<T_Params>::get();
 
-                            // field data
+                            // get field data
                             fieldDataBox = openPMDdata.bufferFieldData->getDeviceBuffer().getDataBox();
 
-                            // field data attributes
+                            // get field data attributes
                             extentOpenPMDdataBox = openPMDdata.bufferExtentOpenPMD->getDeviceBuffer().getDataBox();
                             cellSizeOpenPMDdataBox = openPMDdata.bufferCellSizeOpenPMD->getDeviceBuffer().getDataBox();
                             offsetOpenPMDdataBox = openPMDdata.bufferOffsetOpenPMD->getDeviceBuffer().getDataBox();
@@ -437,11 +441,11 @@ namespace picongpu
                             auto const posPIC = totalCellIdx * cellSize;   // given position
 
                             // find the axis indices
-                            float3_X const xyzAxisIdxPlusOne(1.0_X, 2.0_X, 3.0_X);  // axis indices + 1
+                            float3_X const xyzAxisIdxPlusOne(1.0_X, 2.0_X, 3.0_X);  // axis indices + 1 (needed for the sign)
                             int const propAxisIdx = static_cast<int>(pmacc::math::abs(pmacc::math::dot(xyzAxisIdxPlusOne, getDirection()))) - 1;
-                            int const polAxisIdxPlusOne = static_cast<int>(pmacc::math::dot(xyzAxisIdxPlusOne, getPolarisationVector())); // can be negative!
+                            int const polAxisIdxPlusOne = static_cast<int>(pmacc::math::dot(xyzAxisIdxPlusOne, getPolarisationVector()));
                             int const transvAxisIdxPlusOne = static_cast<int>(pmacc::math::dot(xyzAxisIdxPlusOne,
-                                                                 pmacc::math::cross(getDirection(), getPolarisationVector()))); // can be negative!
+                                                                 pmacc::math::cross(getDirection(), getPolarisationVector())));
 
                             // check whether the system is right handed, i.e. getDirection x getPolarisationVector > 0
                             bool rh = true;  // > 0
@@ -450,45 +454,38 @@ namespace picongpu
                                 Unitless::propagationAxisOpenPMD == "z" and Unitless::polarisationAxisOpenPMD == "y")
                                 rh = false;  // < 0
 
+                            // find the index in field data which is closest to totalCellIdx adn timePIC
                             float3_X idxClosestRaw;  // raw = not yet rounded to integers
 
                             for(uint32_t d = 0u; d < simDim; d++)
                             {
                                 // if posPIC lies outside of stored field data extent, return default value
-                                if(d != propAxisIdx and
-                                    (posPIC[d] < offsetOpenPMDdataBox(d)                                                                    // transversal axes
-                                     or posPIC[d] > offsetOpenPMDdataBox(d) + (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d))  // transversal axes
-                                    or (timePIC - Unitless::TIME_DELAY) < 0                                                                              // propagation axis
-                                    or (timePIC - Unitless::TIME_DELAY) > (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d) / SPEED_OF_LIGHT)  // propagation axis
+                                if( d != propAxisIdx and  // transversal axes:
+                                    (posPIC[d] < offsetOpenPMDdataBox(d)
+                                        or posPIC[d] > offsetOpenPMDdataBox(d) + (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d))
+                                    // propagation axis:
+                                    or (timePIC - Unitless::TIME_DELAY) < 0 
+                                    or (timePIC - Unitless::TIME_DELAY) > (extentOpenPMDdataBox(d)-1.0_X) * cellSizeOpenPMDdataBox(d) / SPEED_OF_LIGHT )
                                     return Unitless::defaultEFieldValue;
-                                else  // find index in measured field data which is closest to totalCellIdx
+                                else
                                 {
                                     if(d == pmacc::math::abs(polAxisIdxPlusOne) - 1 and polAxisIdxPlusOne < 0 or
-                                       d == pmacc::math::abs(transvAxisIdxPlusOne) - 1 and (transvAxisIdxPlusOne < 0 and rh == true or transvAxisIdxPlusOne > 0 and rh == false))
-                                        idxClosestRaw[d] = extentOpenPMDdataBox(d) - 1.0_X - (posPIC[d] - offsetOpenPMDdataBox(d)) / cellSizeOpenPMDdataBox(d);  // invert direction
-
+                                       d == pmacc::math::abs(transvAxisIdxPlusOne) - 1 and 
+                                            (transvAxisIdxPlusOne < 0 and rh == true or transvAxisIdxPlusOne > 0 and rh == false))
+                                        // invert direction
+                                        idxClosestRaw[d] = extentOpenPMDdataBox(d) - 1.0_X - (posPIC[d] - offsetOpenPMDdataBox(d)) / cellSizeOpenPMDdataBox(d);
                                     else  // keep original direction
                                         idxClosestRaw[d] = (posPIC[d] - offsetOpenPMDdataBox(d)) / cellSizeOpenPMDdataBox(d);
                                 }
                             }
 
                             // correct longitudinal index
-                            idxClosestRaw[propAxisIdx] = extentOpenPMDdataBox(propAxisIdx)-1.0_X - (timePIC - Unitless::TIME_DELAY) / cellSizeOpenPMDdataBox(propAxisIdx) * SPEED_OF_LIGHT;
+                            idxClosestRaw[propAxisIdx] = extentOpenPMDdataBox(propAxisIdx)-1.0_X
+                                        - (timePIC - Unitless::TIME_DELAY) / cellSizeOpenPMDdataBox(propAxisIdx) * SPEED_OF_LIGHT;
 
                             DataSpace<simDim> const idxClosest = static_cast<pmacc::math::Vector<int, simDim>>(idxClosestRaw + floatD_X::create(0.5_X));
                             // the other 7 nearest neighbour indices still have to be found
-
-                            // noch entfernen
-                            for(uint32_t d = 0u; d < simDim; d++)
-                            {
-                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] >= 0, "Error: idxClosest[%u] < 0 ", d);
-                                PMACC_DEVICE_VERIFY_MSG(idxClosest[d] <= extentOpenPMDdataBox(d) - 1, "Error: idxClosest[%u] > extentOpenPMDdataBox(d) - 1", d);
-                            }
-
-                            float_X interpE = 0.0_X;
-
                             DataSpace<simDim> idxShift;  // shift to the other nearest neighbour indices
-                            // pmacc::math::Vector<int, simDim>
                             floatD_X weight;
                             for(uint32_t d = 0u; d < simDim; d++)
                             {
@@ -502,22 +499,17 @@ namespace picongpu
                                 weight[d] = pmacc::math::abs(static_cast<float_X>(idxClosest[d]) - idxClosestRaw[d]);
                             }
 
-                            // maybe one could find a more elegant solution for this
+                            // maybe one could find a more elegant solution for this haha
+                            /*
                             interpE += fieldDataBox(idxClosest) * (floatD_X::create(1.0_X) - weight).productOfComponents();  // 0 : E(x0, y0, z0)
                             DataSpace<simDim> idx1 = idxClosest;
                             idx1[0] = idxClosest[0] + idxShift[0];
-                                //remove
-                                PMACC_DEVICE_VERIFY_MSG(idx1[0] <= extentOpenPMDdataBox(0) - 1 and idx1[0] >= 0, "Error: idx1[0] = %i", idx1[0]);
                             interpE += fieldDataBox(idx1) * weight[0] * (1.0_X - weight[1]) * (1.0_X - weight[2]);           // 1 : E(x1, y0, z0)
                             DataSpace<simDim> idx2 = idxClosest;
                             idx2[1] = idxClosest[1] + idxShift[1];
-                                //remove
-                                PMACC_DEVICE_VERIFY_MSG(idx2[1] <= extentOpenPMDdataBox(1) - 1 and idx2[1] >= 0, "Error: idx2[1] = %i", idx2[1]);
                             interpE += fieldDataBox(idx2) * (1.0_X - weight[0]) * weight[1] * (1.0_X - weight[2]);           // 2 : E(x0, y1, z0)
                             DataSpace<simDim> idx3 = idxClosest;
                             idx3[2] = idxClosest[2] + idxShift[2];
-                                //remove
-                                PMACC_DEVICE_VERIFY_MSG(idx3[2] <= extentOpenPMDdataBox(2) - 1 and idx3[2] >= 0, "Error: idx3[2] = %i", idx3[2]);
                             interpE += fieldDataBox(idx3) * (1.0_X - weight[0]) * (1.0_X - weight[1]) * weight[2];           // 3 : E(x0, y0, z1)
                             idx1[1] = idxClosest[1] + idxShift[1];
                             interpE += fieldDataBox(idx1) * weight[0] * weight[1] * (1.0_X - weight[2]);                     // 4 : E(x1, y1, z0)
@@ -526,6 +518,32 @@ namespace picongpu
                             idx3[0] = idxClosest[0] + idxShift[0];
                             interpE += fieldDataBox(idx3) * weight[0] * (1.0_X - weight[1]) * weight[2];                     // 6 : E(x1, y0, z1)
                             interpE += fieldDataBox(idxClosest + idxShift) * weight.productOfComponents();                   // 7 : E(x1, y1, z1)
+                            */
+                            
+                            // linear interpolation routine
+                            float_X interpE = 0.0_X;
+                            interpE += fieldDataBox(idxClosest) * (floatD_X::create(1.0_X) - weight).productOfComponents();
+                            for(uint32_t d = 0u; d < simDim; d++)
+                            {
+                                DataSpace<simDim> idxNext = idxClosest;
+                                floatD_X ones = floatD_X::create(1.0_X);
+                                idxNext[d] = idxClosest[d] + idxShift[d];
+                                ones[d] = 0.0_X;
+                                interpE -= fieldDataBox(idxNext) * (ones - weight).productOfComponents();
+                                if(d == 2)
+                                {
+                                    idxNext[0] = idxClosest[0] + idxShift[0];
+                                    ones[0] = 0.0_X;
+                                }
+                                else
+                                {
+                                    idxNext[d+1] = idxClosest[d+1] + idxShift[d+1];
+                                    ones[d+1] = 0.0_X;
+                                }
+                                interpE += fieldDataBox(idxNext) * (ones - weight).productOfComponents();
+                                
+                            }
+                            interpE += fieldDataBox(idxClosest + idxShift) * weight.productOfComponents();
 
                             return interpE;
                         } // getValueE
