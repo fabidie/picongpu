@@ -8,9 +8,11 @@ from .solver import ElectromagneticSolver
 from .gaussian_laser import GaussianLaser
 from .species import Species
 from .layout import PseudoRandomLayout
-from .distribution import UniformDistribution
-from .distribution import FoilDistribution
 from . import constants
+
+from .distribution import FoilDistribution
+from .distribution import UniformDistribution
+from .distribution import GaussianDistribution
 
 import picmistandard
 
@@ -25,8 +27,9 @@ __all__ = [
     "GaussianLaser",
     "Species",
     "PseudoRandomLayout",
-    "UniformDistribution",
     "FoilDistribution",
+    "UniformDistribution",
+    "GaussianDistribution",
     "constants",
 ]
 

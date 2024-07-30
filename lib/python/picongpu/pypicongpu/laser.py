@@ -1,19 +1,20 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Alexander Debus
 License: GPLv3+
 """
 
 from . import util
-from typeguard import typechecked
-from enum import Enum
 from .rendering import RenderedObject
+
+import enum
 import typing
+import typeguard
 import logging
 
 
-@typechecked
+@typeguard.typechecked
 class GaussianLaser(RenderedObject):
     """
     PIConGPU Gaussian Laser
@@ -21,7 +22,7 @@ class GaussianLaser(RenderedObject):
     Holds Parameters to specify a gaussian laser
     """
 
-    class PolarizationType(Enum):
+    class PolarizationType(enum.Enum):
         """represents a polarization of a laser (for PIConGPU)"""
 
         LINEAR = 1

@@ -1,21 +1,21 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
-from typeguard import typechecked
-from .. import util
 from ..rendering import RenderedObject
+from .attribute import Attribute, Position, Momentum
+from .constant import Constant, Charge, Mass, DensityRatio, Ionizers, ElementProperties
+from .. import util
+
+import typeguard
 import typing
 import re
 
-from .attribute import Attribute, Position, Momentum
-from .constant import Constant, Charge, Mass, DensityRatio, Ionizers, ElementProperties
 
-
-@typechecked
+@typeguard.typechecked
 class Species(RenderedObject):
     """
     PyPIConGPU species definition

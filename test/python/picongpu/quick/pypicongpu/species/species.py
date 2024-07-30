@@ -1,14 +1,11 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
 from picongpu.pypicongpu.species import Species
-
-import unittest
-import typeguard
 
 from picongpu.pypicongpu.species.attribute import Position, Weighting, Momentum
 from picongpu.pypicongpu.species.constant import (
@@ -24,6 +21,8 @@ from .attribute import DummyAttribute
 from .constant import DummyConstant
 
 import itertools
+import unittest
+import typeguard
 
 
 class TestSpecies(unittest.TestCase):

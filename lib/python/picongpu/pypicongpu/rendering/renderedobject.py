@@ -1,21 +1,21 @@
 """
-This file is part of the PIConGPU.
-Copyright 2021-2023 PIConGPU contributors
+This file is part of PIConGPU.
+Copyright 2021-2024 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
-from .. import util
-from typeguard import typechecked
+import typeguard
 import typing
 import jsonschema
+import referencing
 import logging
 import pathlib
 import re
 import json
 
 
-@typechecked
+@typeguard.typechecked
 class RenderedObject:
     """
     Class to be inherited from for rendering context generation
@@ -33,9 +33,9 @@ class RenderedObject:
     an error is raised.
     """
 
-    _schema_by_uri = util.build_typesafe_property(typing.Dict[str, dict])
+    _registry: referencing.Registry = referencing.Registry()
     """
-    store providing loaded schemas by their uri
+    store providing all found schemas
 
     intended to be filled by maybe_fill_schema_store()
     """
@@ -61,8 +61,8 @@ class RenderedObject:
         Does nothing if already executed previously.
         Uses static class attribute, so is global.
 
-        Crawls predefined directory (TODO which) for ".json" files, does not
-        place further restriction on naming schemes.
+        Crawls predefined directory "share/picongpu/pypicongpu/schema" for ".json" files,
+        otherwise no restriction on naming of schemas.
         """
         # if already loaded -> quit
         if RenderedObject._schemas_loaded:
@@ -83,7 +83,6 @@ class RenderedObject:
 
         logging.debug("found {} schemas in {}".format(len(all_json_files), schemas_path))
 
-        RenderedObject._schema_by_uri = {}
         for json_file_path in all_json_files:
             with open(json_file_path, "r") as infile:
                 schema = json.load(infile)
@@ -94,8 +93,15 @@ class RenderedObject:
             if type(uri) is not str:
                 raise TypeError("URI ($id) must be string: {}".format(json_file_path))
 
-            RenderedObject._schema_by_uri[uri] = schema
+            resource = referencing.Resource(contents=schema, specification=referencing.jsonschema.DRAFT202012)
 
+            # registries are immutable, every call will return new instance and leave old instance unchanged
+            RenderedObject._registry = RenderedObject._registry.with_resource(uri, resource)
+
+        # crawl all added resources
+        RenderedObject._registry = RenderedObject._registry.crawl()
+
+        # mark registry as loaded
         RenderedObject._schemas_loaded = True
 
     @staticmethod
@@ -141,10 +147,10 @@ class RenderedObject:
         # load schemas (if not done yet)
         RenderedObject._maybe_fill_schema_store()
 
-        if uri not in RenderedObject._schema_by_uri:
-            raise RuntimeError("schema not found for FQN {}: URI {}".format(fqn, uri))
-
-        schema = RenderedObject._schema_by_uri[uri]
+        try:
+            schema = RenderedObject._registry.contents(uri)
+        except referencing.exceptions.NoSuchResource:
+            raise referencing.exceptions.NoSuchResource("schema not found for FQN {}: URI {}".format(fqn, uri))
 
         # validate schema
         validator = jsonschema.Draft202012Validator(schema=schema)
@@ -161,14 +167,14 @@ class RenderedObject:
 
         return schema
 
-    def _get_serialized(self) -> dict:
+    def _get_serialized(self) -> dict | None:
         """
         return all required content for rendering as a dict
         :return: content as dictionary
         """
         raise NotImplementedError("called parent _get_serialized of parent RenderedObject")
 
-    def get_rendering_context(self) -> dict:
+    def get_rendering_context(self) -> dict | None:
         """
         get rendering context representation of this object
 
@@ -185,26 +191,18 @@ class RenderedObject:
         return serialized
 
     @staticmethod
-    def check_context_for_type(type_to_check: type, context: dict) -> None:
+    def check_context_for_type(type_to_check: type, context: dict | None) -> None:
         """
         check if the given context is valid for the given type
 
         Raises on error, passes silently if okay.
 
-        :raise ValidationError: on schema violiation
+        :raise ValidationError: on schema violation
         :raise RuntimeError: on schema not found
         """
+
         schema = RenderedObject._get_schema_from_class(type_to_check)
-
-        fqn = RenderedObject._get_fully_qualified_class_name(type_to_check)
-        uri = RenderedObject._get_schema_uri_by_fully_qualified_class_name(fqn)
-
-        resolver = jsonschema.RefResolver(
-            base_uri=RenderedObject._BASE_URI,
-            referrer=uri,
-            store=RenderedObject._schema_by_uri,
-        )
-        validator = jsonschema.Draft202012Validator(schema=schema, resolver=resolver)
+        validator = jsonschema.Draft202012Validator(schema=schema, registry=RenderedObject._registry)
 
         # raises on error
         validator.validate(context)

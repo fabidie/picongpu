@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -10,10 +10,11 @@ from ..species import Species
 from ..attribute import BoundElectrons
 from ..constant import Ionizers
 from ... import util
-from typeguard import typechecked
+
+import typeguard
 
 
-@typechecked
+@typeguard.typechecked
 class SetBoundElectrons(Operation):
     """
     assigns and set the boundElectrons attribute

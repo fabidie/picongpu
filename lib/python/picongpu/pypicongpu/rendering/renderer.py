@@ -1,12 +1,12 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
 import typing
-from typeguard import typechecked
+import typeguard
 import math
 import datetime
 import sympy
@@ -17,7 +17,7 @@ import pathlib
 import functools
 
 
-@typechecked
+@typeguard.typechecked
 class Renderer:
     """
     helper class to render Mustache templates
@@ -55,8 +55,11 @@ class Renderer:
                     raise TypeError("leaf must not be empty dict")
                 # dict -> recursive call
                 Renderer.__check_rendering_context_recursive("{}.{}".format(path, key), value)
+            elif key == "tags":
+                # tags do not need to be checked
+                return
             elif type(value) is list:
-                # may only contain dicts
+                # may only contain dicts, unless it is a tag list
                 # note: this is not a strict mustache requirement, but only
                 # exists to prevent developer-screwups (in mustache, rendering
                 # mylist: [1, 2, 3] is performed by
@@ -119,8 +122,8 @@ class Renderer:
             if type(value) is dict:
                 # dict -> decent
                 pp[key] = Renderer.__get_context_preprocessed_recursive(value)
-            elif type(value) is list:
-                # list: add _last, _first
+            elif type(value) is list and key != "tags":
+                # list: add _last, _first, unless it is a tag list
                 new_list = []
                 for i in range(len(value)):
                     elem = Renderer.__get_context_preprocessed_recursive(value[i])

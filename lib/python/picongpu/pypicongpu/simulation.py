@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -7,17 +7,20 @@ License: GPLv3+
 
 from .grid import Grid3D
 from .laser import GaussianLaser
+from .movingwindow import MovingWindow
 from .solver import Solver
 from . import species
 from . import util
 from . import output
 from .rendering import RenderedObject
+from .customuserinput import InterfaceCustomUserInput
 
 import typing
-from typeguard import typechecked
+import typeguard
+import logging
 
 
-@typechecked
+@typeguard.typechecked
 class Simulation(RenderedObject):
     """
     Represents all parameters required to build & run a PIConGPU simulation.
@@ -53,13 +56,15 @@ class Simulation(RenderedObject):
     used for normalization of units
     """
 
-    # may not use util.build_typesafe_property since this attribute is usually never initialized
-    custom_user_input = util.build_typesafe_property(typing.Optional[list[RenderedObject]])
+    custom_user_input = util.build_typesafe_property(typing.Optional[list[InterfaceCustomUserInput]])
     """
     object that contains additional user specified input parameters to be used in custom templates
 
     @attention custom user input is global to the simulation
     """
+
+    moving_window = util.build_typesafe_property(typing.Optional[MovingWindow])
+    """used moving Window, set to None to disable"""
 
     def __get_output_context(self) -> dict:
         """retrieve all output objects"""
@@ -70,45 +75,29 @@ class Simulation(RenderedObject):
             "auto": auto.get_rendering_context(),
         }
 
-    def __checkDoesNotChangeExistingKeyValues(self, firstDict, secondDict):
-        for key in firstDict.keys():
-            if (key in secondDict) and (firstDict[key] != secondDict[key]):
-                raise ValueError("Key " + str(key) + " exist already, and specified values differ.")
-
-    def __checkTags(self, existing_tags, tags):
-        if "" in tags:
-            raise ValueError("tags must not be empty string!")
-        for tag in tags:
-            if tag in existing_tags:
-                raise ValueError("duplicate tag provided!, tags must be unique!")
-
     def __render_custom_user_input_list(self) -> dict:
         custom_rendering_context = {"tags": []}
 
         for entry in self.custom_user_input:
-            add_context = entry.get_rendering_context()
+            add_context = entry.get_generic_rendering_context()
             tags = entry.get_tags()
 
-            self.__checkDoesNotChangeExistingKeyValues(custom_rendering_context, add_context)
-            self.__checkTags(custom_rendering_context["tags"], tags)
+            entry.check_does_not_change_existing_key_values(custom_rendering_context, add_context)
+            entry.check_tags(custom_rendering_context["tags"], tags)
 
             custom_rendering_context.update(add_context)
             custom_rendering_context["tags"].extend(tags)
 
         return custom_rendering_context
 
-    def __foundCustomInput(self, serialized: dict):
-        print("NOTE: found custom user input with tags: " + str(serialized["customuserinput"]["tags"]))
-        print(
-            "\t WARNING: custom input is not checked, it is the users responsibility to check inputs and generated input."
+    def __found_custom_input(self, serialized: dict):
+        logging.info(
+            "found custom user input with tags: "
+            + str(serialized["customuserinput"]["tags"])
+            + "\n"
+            + "\t WARNING: custom input is not checked, it is the user's responsibility to check inputs and generated input.\n"
+            + "\t WARNING: custom templates are required if using custom user input.\n"
         )
-        print("\t WARNING: custom templates are required if using custom user input.")
-
-    def add_custom_user_input(self, custom_input: RenderedObject):
-        if self.custom_user_input is None:
-            self.custom_user_input = [custom_input]
-        else:
-            self.custom_user_input.append(custom_input)
 
     def _get_serialized(self) -> dict:
         serialized = {
@@ -126,9 +115,14 @@ class Simulation(RenderedObject):
         else:
             serialized["laser"] = None
 
+        if self.moving_window is not None:
+            serialized["moving_window"] = self.moving_window.get_rendering_context()
+        else:
+            serialized["moving_window"] = None
+
         if self.custom_user_input is not None:
             serialized["customuserinput"] = self.__render_custom_user_input_list()
-            self.__foundCustomInput(serialized)
+            self.__found_custom_input(serialized)
         else:
             serialized["customuserinput"] = None
 

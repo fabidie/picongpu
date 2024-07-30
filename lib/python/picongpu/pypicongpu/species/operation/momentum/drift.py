@@ -1,16 +1,17 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
-from typeguard import typechecked
+from ....rendering import RenderedObject
 from .... import util
+
+import typeguard
 import typing
 import math
 from scipy import constants
-from ....rendering import RenderedObject
 
 # Note to the future maintainer:
 # If you want to add another way to specify the drift, please turn
@@ -18,7 +19,7 @@ from ....rendering import RenderedObject
 # method.
 
 
-@typechecked
+@typeguard.typechecked
 class Drift(RenderedObject):
     """
     Add drift to a species (momentum)

@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Richard Pausch
 License: GPLv3+
@@ -7,10 +7,11 @@ License: GPLv3+
 
 from .. import util
 from ..rendering import RenderedObject
-from typeguard import typechecked
+
+import typeguard
 
 
-@typechecked
+@typeguard.typechecked
 class Auto(RenderedObject):
     """
     Class to provide output **without further configuration**.

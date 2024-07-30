@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Richard Pausch
 License: GPLv3+
@@ -10,8 +10,9 @@ from . import util
 from .rendering import Renderer
 
 from os import path, environ, chdir
-import typeguard
 from functools import reduce
+
+import typeguard
 import tempfile
 import subprocess
 import logging
@@ -319,7 +320,7 @@ class Runner:
     def __build(self):
         """launch build of PIConGPU"""
         chdir(self.setup_dir)
-        runArgs("pic-build", ["pic-build"])
+        runArgs("pic-build", ["pic-build", "-j", "4"])
 
     def __run(self):
         """

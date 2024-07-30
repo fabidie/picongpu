@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -45,6 +45,57 @@ class TestDistribution(unittest.TestCase):
     def test_uniform(self):
         uniform_dist = picmi.UniformDistribution(density=8e24)
         self._compile_distribution(uniform_dist)
+
+    def test_foil_pre_and_post(self):
+        foil_dist = picmi.FoilDistribution(
+            density=8.0e24,
+            front=2.0e-5,
+            thickness=1.0e-5,
+            exponential_pre_plasma_length=1.0e-6,
+            exponential_pre_plasma_cutoff=1.0e-5,
+            exponential_post_plasma_length=1.0e-6,
+            exponential_post_plasma_cutoff=1.0e-5,
+        )
+        self._compile_distribution(foil_dist)
+
+    def test_foil_pre(self):
+        foil_dist = picmi.FoilDistribution(
+            density=8.0e24,
+            front=2.0e-5,
+            thickness=1.0e-5,
+            exponential_pre_plasma_length=1.0e-6,
+            exponential_pre_plasma_cutoff=1.0e-5,
+        )
+        self._compile_distribution(foil_dist)
+
+    def test_foil_post(self):
+        # with post-plasma only
+        foil_dist = picmi.FoilDistribution(
+            density=8.0e24,
+            front=2.0e-5,
+            thickness=1.0e-5,
+            exponential_post_plasma_length=1.0e-6,
+            exponential_post_plasma_cutoff=1.0e-5,
+        )
+        self._compile_distribution(foil_dist)
+
+    def test_foil_nothing(self):
+        # with no pre- or post-plasma
+        foil_dist = picmi.FoilDistribution(density=8.0e24, front=2.0e-5, thickness=1.0e-5)
+        self._compile_distribution(foil_dist)
+
+    def test_gaussian(self):
+        gaussian_dist = picmi.GaussianDistribution(
+            center_front=2.0e-5,
+            center_rear=3.0e-5,
+            sigma_front=5.0e-6,
+            sigma_rear=5.0e-6,
+            power=4.0,
+            factor=-1.0,
+            vacuum_cells_front=50,
+            density=8e24,
+        )
+        self._compile_distribution(gaussian_dist)
 
     # tests for analytic distribution and gaussian-bunch distribution have been
     #   removed for now, see issue #4367 for the test cases

@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -7,10 +7,11 @@ License: GPLv3+
 
 from .densityprofile import DensityProfile
 from .... import util
-from typeguard import typechecked
+
+import typeguard
 
 
-@typechecked
+@typeguard.typechecked
 class Uniform(DensityProfile):
     """
     globally constant density

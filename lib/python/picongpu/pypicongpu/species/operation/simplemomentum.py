@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -10,11 +10,12 @@ from .momentum import Temperature, Drift
 from ..species import Species
 from ..attribute import Momentum
 from ... import util
-from typeguard import typechecked
+
+import typeguard
 import typing
 
 
-@typechecked
+@typeguard.typechecked
 class SimpleMomentum(Operation):
     """
     provides momentum to a species

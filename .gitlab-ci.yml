@@ -7,7 +7,7 @@ stages:
   - test
 
 variables:
-  CONTAINER_TAG: "3.1"
+  CONTAINER_TAG: "3.2"
 
 .base_generate-reduced-matrix:
   stage: generate
@@ -152,9 +152,9 @@ pypicongpu-generate-full-matrix:
   script:
     - apt update
     - apt install -y python3 python3-pip
-    - pip3 install pyyaml requests
+    - pip3 install pyyaml requests typeguard
     - $CI_PROJECT_DIR/share/ci/git_merge.sh
-    - python3 $CI_PROJECT_DIR/share/ci/pypicongpu_generator.py $CI_PROJECT_DIR/lib/python/picongpu/requirements.txt > compile.yml
+    - python3 $CI_PROJECT_DIR/share/ci/pypicongpu_generator.py $CI_PROJECT_DIR/lib/python/picongpu/picmi/requirements.txt $CI_PROJECT_DIR/lib/python/picongpu/pypicongpu/requirements.txt > compile.yml
     - cat compile.yml
   artifacts:
     paths:
@@ -179,6 +179,6 @@ pypicongpu-compiling-test:
     CI_CONTAINER_NAME: 'ubuntu20.04'
     PYTHON_VERSION: '3.11.*'
     CXX_VERSION: 'g++-11'
-    CMAKE_VERSION: '3.22'
+    CMAKE_VERSION: '3.25'
     BOOST_VERSION: '1.75.0'
     PYTHON_COMPILING_TEST: 'ON'

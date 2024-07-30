@@ -48,7 +48,7 @@ Compiler
 
 CMake
 """""
-- 3.22.0 or higher
+- 3.25.0 or higher
 - *Debian/Ubuntu:* ``sudo apt-get install cmake file cmake-curses-gui``
 - *Arch Linux:* ``sudo pacman --sync cmake``
 - *Spack:* ``spack install cmake``
@@ -102,9 +102,10 @@ rsync
 - *Arch Linux:* ``sudo pacman --sync rsync``
 - *Spack:* ``spack install rsync``
 
-alpaka 1.1.X
+alpaka 1.2.X
 """"""""""""""""
 - `alpaka <https://github.com/alpaka-group/alpaka>`_ is included in the PIConGPU source code
+- requires code version or newer https://github.com/alpaka-group/alpaka/tree/6854077d6db2fcf9805e1c53c86b12f5d59a0739
 
 mallocMC 2.6.0crp-dev
 """""""""""""""""""""
@@ -134,7 +135,7 @@ Optional Libraries
 
 CUDA
 """"
-- `11.0.0+ <https://developer.nvidia.com/cuda-downloads>`_
+- `11.2.0+ <https://developer.nvidia.com/cuda-downloads>`_
 - required if you want to run on Nvidia GPUs
 - *Debian/Ubuntu:* ``sudo apt-get install nvidia-cuda-toolkit``
 - *Arch Linux:* ``sudo pacman --sync cuda``
@@ -149,7 +150,7 @@ CUDA
 
 ROCm/HIP
 """"""""
-- `5.2+ <https://rocm.docs.amd.com/projects/HIP/en/latest/install/install.html>`_
+- `5.4+ <https://rocm.docs.amd.com/projects/HIP/en/latest/install/install.html>`_
 - required if you want to run on AMD GPUs
 - *Debian/Ubuntu:*
   - ``export ROCM_VER=5.5.0``

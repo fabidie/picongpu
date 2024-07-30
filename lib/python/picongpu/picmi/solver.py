@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -8,11 +8,10 @@ License: GPLv3+
 from ..pypicongpu import util, solver
 
 import picmistandard
+import typeguard
 
-from typeguard import typechecked
 
-
-@typechecked
+@typeguard.typechecked
 class ElectromagneticSolver(picmistandard.PICMI_ElectromagneticSolver):
     """
     PICMI Electromagnic Solver

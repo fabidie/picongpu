@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -7,14 +7,15 @@ License: GPLv3+
 
 from ...rendering import RenderedObject
 from ... import util
-import typing
-from typeguard import typechecked
 from ..attribute import Attribute
 from ..species import Species
+
+import typeguard
+import typing
 from functools import reduce
 
 
-@typechecked
+@typeguard.typechecked
 class Operation(RenderedObject):
     """
     Defines the initialization of a set of attributes across multiple species

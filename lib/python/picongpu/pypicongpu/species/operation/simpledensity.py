@@ -1,21 +1,22 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
 from .densityoperation import DensityOperation
-from typeguard import typechecked
-from ... import util
-from ..species import Species
 from .densityprofile import DensityProfile
-import typing
+from ..species import Species
 from ..attribute import Position, Weighting
 from ..constant import DensityRatio
+from ... import util
+
+import typeguard
+import typing
 
 
-@typechecked
+@typeguard.typechecked
 class SimpleDensity(DensityOperation):
     """
     Place a set of species together, using the same density profile

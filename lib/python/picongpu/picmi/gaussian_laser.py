@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Alexander Debus
 License: GPLv3+
@@ -11,11 +11,11 @@ from . import constants
 import picmistandard
 import math
 
-from typeguard import typechecked
+import typeguard
 import typing
 
 
-@typechecked
+@typeguard.typechecked
 class GaussianLaser(picmistandard.PICMI_GaussianLaser):
     """PICMI object for Gaussian Laser"""
 

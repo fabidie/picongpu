@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2023 PIConGPU contributors
 Authors: Kristin Tippey, Brian Edward Marre
 License: GPLv3+
@@ -21,5 +21,5 @@ class None_(PlasmaRamp):
     def check(self) -> None:
         return
 
-    def _get_serialized(self) -> dict:
-        return {}
+    def _get_serialized(self) -> dict | None:
+        return None

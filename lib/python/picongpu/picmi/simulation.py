@@ -1,25 +1,25 @@
 """
-This file is part of the PIConGPU.
-Copyright 2021-2023 PIConGPU contributors
+This file is part of PIConGPU.
+Copyright 2021-2024 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
-from ..pypicongpu import simulation, runner, util, species
+from ..pypicongpu import simulation, runner, util, species, movingwindow, customuserinput
 from . import constants
 from .grid import Cartesian3DGrid
 from .species import Species as PicongpuPicmiSpecies
 
 import picmistandard
 
-from math import sqrt, isclose
-from typeguard import typechecked
+import math
+import typeguard
 import pathlib
 import logging
 import typing
 
 
-@typechecked
+@typeguard.typechecked
 class Simulation(picmistandard.PICMI_Simulation):
     """
     Simulation as defined by PICMI
@@ -27,6 +27,11 @@ class Simulation(picmistandard.PICMI_Simulation):
     please refer to the PICMI documentation for the spec
     https://picmi-standard.github.io/standard/simulation.html
     """
+
+    __picongpu_custom_input = util.build_typesafe_property(
+        typing.Optional[list[customuserinput.InterfaceCustomUserInput]]
+    )
+    """list of custom user input objects"""
 
     def __yee_compute_cfl_or_delta_t(self) -> None:
         """
@@ -70,7 +75,9 @@ class Simulation(picmistandard.PICMI_Simulation):
 
         if self.time_step_size is not None and self.solver.cfl is not None:
             # both cfl & delta_t given -> check their compatibility
-            delta_t_from_cfl = self.solver.cfl / (constants.c * sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2))
+            delta_t_from_cfl = self.solver.cfl / (
+                constants.c * math.sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2)
+            )
 
             if delta_t_from_cfl != self.time_step_size:
                 raise ValueError(
@@ -82,12 +89,12 @@ class Simulation(picmistandard.PICMI_Simulation):
             if self.time_step_size is not None:
                 # calculate cfl
                 self.solver.cfl = self.time_step_size * (
-                    constants.c * sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2)
+                    constants.c * math.sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2)
                 )
             elif self.solver.cfl is not None:
                 # calculate delta_t
                 self.time_step_size = self.solver.cfl / (
-                    constants.c * sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2)
+                    constants.c * math.sqrt(1 / delta_x**2 + 1 / delta_y**2 + 1 / delta_z**2)
                 )
 
             # if neither delta_t nor cfl are given simply silently pass
@@ -97,17 +104,29 @@ class Simulation(picmistandard.PICMI_Simulation):
         self,
         picongpu_template_dir: typing.Optional[typing.Union[str, pathlib.Path]] = None,
         picongpu_typical_ppc: typing.Optional[int] = None,
+        picongpu_moving_window_move_point: typing.Optional[float] = None,
+        picongpu_moving_window_stop_iteration: typing.Optional[int] = None,
         **kw,
     ):
-        # delegate actual work to parent
+        # delegate additional work to parent
         super().__init__(**kw)
 
-        # perform some additional checks on inputs
+        # additional checks on inputs, @todo move to picmistandard, Brian Marre, 2024
 
-        # note: may throw if both cfl & delta_t are set
+        ## throw if both cfl & delta_t are set
         if self.solver is not None and "Yee" == self.solver.method and isinstance(self.solver.grid, Cartesian3DGrid):
             self.__yee_compute_cfl_or_delta_t()
 
+        # store picongpu specific stuff
+        # @todo switch to pydantic for automatic instrumentation of init method, Brian Marre 2024
+        self.picongpu_typical_ppc = picongpu_typical_ppc
+
+        # internal stuff for PICMI interface only
+        self.__runner = None
+        self.__electron_species = None
+        self.__picongpu_custom_input = None
+
+        # set PyPIConGPU template directory
         if picongpu_template_dir is None:
             self.picongpu_template_dir = None
         else:
@@ -116,6 +135,9 @@ class Simulation(picmistandard.PICMI_Simulation):
             template_path = pathlib.Path(picongpu_template_dir)
             assert template_path.is_dir(), "picongpu_template_dir must be existing dir"
             self.picongpu_template_dir = str(template_path)
+
+        self.moving_window_move_point = picongpu_moving_window_move_point
+        self.moving_window_stop_iteration = picongpu_moving_window_stop_iteration
 
         self.picongpu_typical_ppc = picongpu_typical_ppc
 
@@ -353,9 +375,9 @@ class Simulation(picmistandard.PICMI_Simulation):
                 all_electrons.append(picmi_species)
             elif (
                 picmi_species.mass is not None
-                and isclose(picmi_species.mass, constants.m_e)
+                and math.isclose(picmi_species.mass, constants.m_e)
                 and picmi_species.charge is not None
-                and isclose(picmi_species.charge, -constants.q_e)
+                and math.isclose(picmi_species.charge, -constants.q_e)
             ):
                 all_electrons.append(picmi_species)
 
@@ -418,6 +440,32 @@ class Simulation(picmistandard.PICMI_Simulation):
 
             picmi_species.picongpu_ionization_electrons = self.__get_electron_species()
 
+    def write_input_file(self, file_name: str, pypicongpu_simulation: simulation.Simulation | None = None) -> None:
+        """
+        generate input data set for picongpu
+
+        file_name must be path to a not-yet existing directory (will be filled
+        by pic-create)
+        :param file_name: not yet existing directory
+        :param pypicongpu_simulation: manipulated pypicongpu simulation
+        """
+        if self.__runner is not None:
+            logging.warning("runner already initialized, overwriting")
+
+        # if not overwritten generate from current state
+        if pypicongpu_simulation is None:
+            pypicongpu_simulation = self.get_as_pypicongpu()
+
+        self.__runner = runner.Runner(pypicongpu_simulation, self.picongpu_template_dir, setup_dir=file_name)
+        self.__runner.generate()
+
+    def step(self, nsteps: int = 1):
+        if nsteps != self.max_steps:
+            raise ValueError(
+                "PIConGPU does not support stepwise running. Invoke step() with max_steps (={})".format(self.max_steps)
+            )
+        self.picongpu_run()
+
     def get_as_pypicongpu(self) -> simulation.Simulation:
         """translate to PyPIConGPU object"""
         s = simulation.Simulation()
@@ -425,6 +473,10 @@ class Simulation(picmistandard.PICMI_Simulation):
         s.delta_t_si = self.time_step_size
         s.solver = self.solver.get_as_pypicongpu()
 
+        # already in pypicongpu objects
+        s.custom_user_input = self.__picongpu_custom_input
+
+        # calculate time step
         if self.max_steps is not None:
             s.time_steps = self.max_steps
         elif self.max_time is not None:
@@ -436,26 +488,25 @@ class Simulation(picmistandard.PICMI_Simulation):
         util.unsupported("particle shape", self.particle_shape, "linear")
         util.unsupported("gamma boost", self.gamma_boost)
 
-        # todo: check grid compatibility
-        s.grid = self.solver.grid.get_as_pypicongpu()
+        try:
+            s.grid = self.solver.grid.get_as_pypicongpu()
+        except AttributeError:
+            util.unsupported(f"grid type: {type(self.solver.grid)}")
 
         # any injection method != None is not supported
         if len(self.laser_injection_methods) != self.laser_injection_methods.count(None):
             util.unsupported("laser injection method", self.laser_injection_methods, [])
 
+        # pypicongpu interface currently only supports one laser, @todo change Brian Marre, 2024
         if len(self.lasers) > 1:
             util.unsupported("more than one laser")
 
         if len(self.lasers) == 1:
-            # check requires grid, so grid is translated (and thereby also
-            # checked) above
+            # check requires grid, so grid is translated (and thereby also checked) above
             s.laser = self.lasers[0].get_as_pypicongpu()
         else:
             # explictly disable laser (as required by pypicongpu)
             s.laser = None
-
-        # custom user input must always be set by the user on PyPIConGPU level
-        s.custom_user_input = None
 
         # resolve electrons
         self.__resolve_electrons()
@@ -471,7 +522,21 @@ class Simulation(picmistandard.PICMI_Simulation):
         if s.typical_ppc < 1:
             raise ValueError("typical_ppc must be >= 1")
 
+        # disable moving Window if explicitly activated by the user
+        if self.moving_window_move_point is None:
+            s.moving_window = None
+        else:
+            s.moving_window = movingwindow.MovingWindow(
+                move_point=self.moving_window_move_point, stop_iteration=self.moving_window_stop_iteration
+            )
+
         return s
+
+    def picongpu_add_custom_user_input(self, custom_user_input: customuserinput.InterfaceCustomUserInput):
+        if self.__picongpu_custom_input is None:
+            self.__picongpu_custom_input = [custom_user_input]
+        else:
+            self.__picongpu_custom_input.append(custom_user_input)
 
     def picongpu_run(self) -> None:
         """build and run PIConGPU simulation"""
@@ -480,26 +545,6 @@ class Simulation(picmistandard.PICMI_Simulation):
         self.__runner.generate()
         self.__runner.build()
         self.__runner.run()
-
-    def write_input_file(self, file_name: str) -> None:
-        """
-        generate input data set for picongpu
-
-        file_name must be path to a not-yet existing directory (will be filled
-        by pic-create)
-        :param file_name: not yet existing directory
-        """
-        if self.__runner is not None:
-            logging.warning("runner already initialized, overwriting")
-        self.__runner = runner.Runner(self.get_as_pypicongpu(), self.picongpu_template_dir, setup_dir=file_name)
-        self.__runner.generate()
-
-    def step(self, nsteps: int = 1):
-        if nsteps != self.max_steps:
-            raise ValueError(
-                "PIConGPU does not support stepwise running. Invoke step() with max_steps (={})".format(self.max_steps)
-            )
-        self.picongpu_run()
 
     def picongpu_get_runner(self) -> runner.Runner:
         if self.__runner is None:

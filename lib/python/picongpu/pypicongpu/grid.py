@@ -1,18 +1,18 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Richard Pausch
 License: GPLv3+
 """
 
 from . import util
-from typeguard import typechecked
+import typeguard
 import typing
 import enum
 from .rendering import RenderedObject
 
 
-@typechecked
+@typeguard.typechecked
 class BoundaryCondition(enum.Enum):
     """
     Boundary Condition of PIConGPU
@@ -38,7 +38,7 @@ class BoundaryCondition(enum.Enum):
         return literal_by_boundarycondition[self]
 
 
-@typechecked
+@typeguard.typechecked
 class Grid3D(RenderedObject):
     """
     PIConGPU 3 dimensional (cartesian) grid

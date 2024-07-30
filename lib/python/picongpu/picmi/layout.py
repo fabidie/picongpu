@@ -1,15 +1,15 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
 """
 
 import picmistandard
-from typeguard import typechecked
+import typeguard
 
 
-@typechecked
+@typeguard.typechecked
 class PseudoRandomLayout(picmistandard.PICMI_PseudoRandomLayout):
     # note: is translated from outside, does not do any checks itself
     def check(self):

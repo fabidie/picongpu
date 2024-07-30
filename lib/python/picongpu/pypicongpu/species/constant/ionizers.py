@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre
 License: GPLv3+
@@ -8,11 +8,12 @@ License: GPLv3+
 from .constant import Constant
 from ..attribute import BoundElectrons
 from .elementproperties import ElementProperties
-from typeguard import typechecked
+
+import typeguard
 import typing
 
 
-@typechecked
+@typeguard.typechecked
 class Ionizers(Constant):
     """
     ionizers describing the ionization methods

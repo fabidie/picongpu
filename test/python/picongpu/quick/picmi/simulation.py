@@ -1,5 +1,5 @@
 """
-This file is part of the PIConGPU.
+This file is part of PIConGPU.
 Copyright 2021-2023 PIConGPU contributors
 Authors: Hannes Troepgen, Brian Edward Marre, Richard Pausch
 License: GPLv3+
@@ -12,7 +12,7 @@ import unittest
 import typeguard
 import typing
 
-from picongpu.pypicongpu import species
+from picongpu.pypicongpu import species, customuserinput
 from copy import deepcopy
 import logging
 import tempfile
@@ -70,6 +70,9 @@ class TestPicmiSimulation(unittest.TestCase):
         self.sim = self.__get_sim()
         self.layout = picmi.PseudoRandomLayout(n_macroparticles_per_cell=2)
         self.__to_cleanup = []
+
+        self.customData_1 = [{"test_data_1": 1}, "tag_1"]
+        self.customData_2 = [{"test_data_2": 2}, "tag_2"]
 
     def tearDown(self):
         for dir_to_cleanup in self.__to_cleanup:
@@ -341,6 +344,24 @@ class TestPicmiSimulation(unittest.TestCase):
             (0.14068221552237223, 0.2029580145696681, 0.9690286675623457),
         )
         self.assertAlmostEqual(1.491037242289643, mom_op.drift.gamma)
+
+    def test_moving_window(self):
+        """test that the user may set moving window"""
+        grid = picmi.Cartesian3DGrid(
+            number_of_cells=[192, 2048, 12],
+            lower_bound=[0, 0, 0],
+            upper_bound=[3.40992e-5, 9.07264e-5, 2.1312e-6],
+            lower_boundary_conditions=["open", "open", "periodic"],
+            upper_boundary_conditions=["open", "open", "periodic"],
+        )
+        solver = picmi.ElectromagneticSolver(method="Yee", grid=grid)
+        sim = picmi.Simulation(
+            time_step_size=1.39e-16, max_steps=int(2048), solver=solver, picongpu_moving_window_move_point=0.9
+        )
+        pypic = sim.get_as_pypicongpu()
+
+        self.assertAlmostEqual(pypic.moving_window.move_point, 0.9)
+        self.assertEqual(pypic.moving_window.stop_iteration, None)
 
     def test_ionization_electron_explicit(self):
         """electrons for ionization can be specified explicitly"""
@@ -621,6 +642,42 @@ class TestPicmiSimulation(unittest.TestCase):
         # JSON has been dumped
         self.assertTrue(os.path.isfile(out_dir + "/pypicongpu.json"))
 
+    def test_custom_input_basic_write_input_file(self):
+        """test custom input may be rendered"""
+        # note: automatically cleaned up in teardown
+        out_dir = self.__get_tmpdir_name()
+
+        # create bare bone PICMI-simulation
+        grid = get_grid(1, 1, 1, 32)
+        solver = picmi.ElectromagneticSolver(method="Yee", grid=grid)
+        sim = picmi.Simulation(
+            time_step_size=17,
+            max_steps=128,
+            solver=solver,
+        )
+
+        # add custom input
+        i_1 = customuserinput.CustomUserInput()
+        i_2 = customuserinput.CustomUserInput()
+
+        i_1.addToCustomInput({"test_data_1": 1}, "tag_1")
+        i_2.addToCustomInput({"test_data_2": 2}, "tag_2")
+
+        sim.picongpu_add_custom_user_input(i_1)
+        sim.picongpu_add_custom_user_input(i_2)
+
+        # get pypicongpu simualtion
+        pypicongpu_simulation = sim.get_as_pypicongpu()
+
+        # write simulation
+        sim.write_input_file(out_dir, pypicongpu_simulation=pypicongpu_simulation)
+
+        # check for generated (rendered) dir
+        self.assertTrue(os.path.isdir(out_dir))
+
+        # JSON has been dumped
+        self.assertTrue(os.path.isfile(out_dir + "/pypicongpu.json"))
+
     def test_custom_template_dir_basic_get_runner(self):
         """using picongpu_get_runner() directly sets template dir"""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -718,3 +775,66 @@ class TestPicmiSimulation(unittest.TestCase):
                     solver=solver,
                     picongpu_template_dir=invalid_path,
                 )
+
+    def test_custom_input_pass_thru(self):
+        i = customuserinput.CustomUserInput()
+
+        i.addToCustomInput(self.customData_1[0], self.customData_1[1])
+        i.addToCustomInput(self.customData_2[0], self.customData_2[1])
+
+        self.sim.picongpu_add_custom_user_input(i)
+
+        renderingContextGoodResult = {"test_data_1": 1, "test_data_2": 2, "tags": ["tag_1", "tag_2"]}
+        self.assertEqual(
+            renderingContextGoodResult, self.sim.get_as_pypicongpu().get_rendering_context()["customuserinput"]
+        )
+
+    def test_combination_of_several_custom_inputs(self):
+        i_1 = customuserinput.CustomUserInput()
+        i_2 = customuserinput.CustomUserInput()
+
+        i_1.addToCustomInput(self.customData_1[0], self.customData_1[1])
+        i_2.addToCustomInput(self.customData_2[0], self.customData_2[1])
+
+        self.sim.picongpu_add_custom_user_input(i_1)
+        self.sim.picongpu_add_custom_user_input(i_2)
+
+        renderingContextGoodResult = {"test_data_1": 1, "test_data_2": 2, "tags": ["tag_1", "tag_2"]}
+        self.assertEqual(
+            renderingContextGoodResult, self.sim.get_as_pypicongpu().get_rendering_context()["customuserinput"]
+        )
+
+    def test_duplicated_tag_over_different_custom_inputs(self):
+        i_1 = customuserinput.CustomUserInput()
+        i_2 = customuserinput.CustomUserInput()
+
+        i_1.addToCustomInput(self.customData_1[0], self.customData_1[1])
+        i_2.addToCustomInput(self.customData_2[0], self.customData_1[1])
+
+        self.sim.picongpu_add_custom_user_input(i_1)
+        self.sim.picongpu_add_custom_user_input(i_2)
+
+        with self.assertRaisesRegex(ValueError, "duplicate tag provided!, tags must be unique!"):
+            self.sim.get_as_pypicongpu().get_rendering_context()
+
+    def test_duplicated_key_over_different_custom_inputs(self):
+        i = customuserinput.CustomUserInput()
+        i_sameValue = customuserinput.CustomUserInput()
+        i_differentValue = customuserinput.CustomUserInput()
+
+        duplicateKeyData_differentValue = {"test_data_1": 3}
+        duplicateKeyData_sameValue = {"test_data_1": 1}
+
+        i.addToCustomInput(self.customData_1[0], self.customData_1[1])
+        i_sameValue.addToCustomInput(duplicateKeyData_sameValue, "tag_2")
+        i_differentValue.addToCustomInput(duplicateKeyData_differentValue, "tag_3")
+
+        self.sim.picongpu_add_custom_user_input(i)
+
+        # should work
+        self.sim.picongpu_add_custom_user_input(i_sameValue)
+        self.sim.get_as_pypicongpu().get_rendering_context()
+
+        with self.assertRaisesRegex(ValueError, "Key test_data_1 exist already, and specified values differ."):
+            self.sim.picongpu_add_custom_user_input(i_differentValue)
+            self.sim.get_as_pypicongpu().get_rendering_context()

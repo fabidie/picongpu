@@ -23,7 +23,7 @@
 # Required cmake version
 ################################################################################
 
-cmake_minimum_required(VERSION 3.22.0)
+cmake_minimum_required(VERSION 3.25.0)
 
 
 ################################################################################
@@ -346,7 +346,12 @@ if(PIC_SEARCH_openPMD)
                     # explicitly.
                     EXCLUDE_FROM_ALL)
             else()
-                find_package(toml11 3.7.0 CONFIG REQUIRED)
+                # Since toml11 4.0 was a breaking change,
+                # it needs separate find_package() calls
+                find_package(toml11 3.7.0 CONFIG QUIET)
+                if(NOT toml11_FOUND)
+                    find_package(toml11 4.0 CONFIG REQUIRED)
+                endif()
                 message(STATUS "toml11: Found version '${toml11_VERSION}'")
             endif()
             list(PREPEND HOST_LIBS openPMD::openPMD)
@@ -418,9 +423,10 @@ PIC_dependency_set_status(PNGwriter ${PNGwriter_FOUND})
 # ISAAC
 ################################################################################
 
-PIC_dependency(ISAAC "Framework to in-situ visualize PIConGPU during the execution." AUTO)
+PIC_dependency(ISAAC "Framework to in-situ visualize PIConGPU during the execution." OFF)
 
 if(PIC_SEARCH_ISAAC)
+    message(WARNING "ISAAC is currently not supporting alpaka 1.2.0+ if you are not fixing the ISSAC you should not enable this dependency.")
     find_package(ISAAC 1.4.0 CONFIG QUIET)
     if(ISAAC_FOUND)
         message(STATUS "Found ISAAC: ${ISAAC_DIR}")
